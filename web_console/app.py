@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""StoryForge 操作页面（MVP）"""
+"""StoryForge 操作页面（V2）"""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shlex
 import subprocess
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Deque, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 
@@ -41,9 +42,17 @@ class StartTaskRequest(BaseModel):
     command: Optional[str] = None
 
 
-app = FastAPI(title="StoryForge Console", version="0.1.0")
+class SaveTemplateRequest(BaseModel):
+    name: str
+    project_dir: str
+    command: str
+
+
+app = FastAPI(title="StoryForge Console", version="0.2.0")
 TASKS: Dict[str, TaskRuntime] = {}
 TASK_LOCK = threading.Lock()
+MAX_RUNNING_TASKS = int(os.getenv("STORYFORGE_MAX_RUNNING_TASKS", "2"))
+TEMPLATE_FILE = Path(__file__).resolve().parent / "templates.json"
 
 
 def _now() -> str:
@@ -70,6 +79,30 @@ def _tail_logs(logs: Deque[str], offset: int) -> List[str]:
     if offset < 0:
         offset = 0
     return data[offset:]
+
+
+def _running_tasks_count() -> int:
+    with TASK_LOCK:
+        return sum(1 for t in TASKS.values() if t.status == "running")
+
+
+def _load_templates() -> List[dict]:
+    if not TEMPLATE_FILE.exists():
+        return []
+    try:
+        data = json.loads(TEMPLATE_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _save_templates(templates: List[dict]) -> None:
+    TEMPLATE_FILE.write_text(
+        json.dumps(templates, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _run_task(task_id: str) -> None:
@@ -126,8 +159,17 @@ async def index() -> str:
   </style>
 </head>
 <body>
-  <h2>StoryForge 操作页面（MVP）</h2>
-  <p>支持在不同项目目录启动独立任务并查看日志。</p>
+  <h2>StoryForge 操作页面（V2）</h2>
+  <p>支持模板保存、并发上限控制、日志下载。</p>
+  <p>运行中上限：<strong id="max_running">-</strong></p>
+
+  <div>
+    <label>模板</label><br />
+    <select id="template_select" onchange="applyTemplate()"></select>
+    <button onclick="saveTemplate()">保存为模板</button>
+    <button onclick="loadTemplates()">刷新模板</button>
+  </div>
+
   <div>
     <label>项目目录</label><br />
     <input id="project_dir" value="/Users/ripple/work space/StoryForge" />
@@ -146,10 +188,57 @@ async def index() -> str:
   <h3>日志</h3>
   <select id="task_select" onchange="offset=0;document.getElementById('logs').textContent='';pollLogs()"></select>
   <button onclick="stopTask()">停止选中任务</button>
+  <button onclick="downloadLog()">下载日志</button>
   <pre id="logs"></pre>
 
 <script>
 let offset = 0;
+
+async function loadConfig() {
+  const res = await fetch('/api/config');
+  const data = await res.json();
+  document.getElementById('max_running').innerText = data.max_running_tasks;
+}
+
+async function loadTemplates() {
+  const res = await fetch('/api/templates');
+  const data = await res.json();
+  const sel = document.getElementById('template_select');
+  sel.innerHTML = '<option value="">(选择模板)</option>';
+  for (const t of data.templates) {
+    const opt = document.createElement('option');
+    opt.value = t.name;
+    opt.text = `${t.name} | ${t.project_dir}`;
+    opt.dataset.project = t.project_dir;
+    opt.dataset.command = t.command;
+    sel.appendChild(opt);
+  }
+}
+
+function applyTemplate() {
+  const sel = document.getElementById('template_select');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.dataset.project) return;
+  document.getElementById('project_dir').value = opt.dataset.project;
+  document.getElementById('command').value = opt.dataset.command;
+}
+
+async function saveTemplate() {
+  const name = prompt('模板名称');
+  if (!name) return;
+  const project_dir = document.getElementById('project_dir').value;
+  const command = document.getElementById('command').value;
+  const res = await fetch('/api/templates', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, project_dir, command})
+  });
+  if (!res.ok) {
+    alert(await res.text());
+    return;
+  }
+  await loadTemplates();
+}
 
 async function startTask() {
   const project_dir = document.getElementById('project_dir').value;
@@ -209,16 +298,58 @@ async function stopTask() {
   await loadTasks();
 }
 
+function downloadLog() {
+  const taskId = document.getElementById('task_select').value;
+  if (!taskId) return;
+  window.open(`/api/tasks/${taskId}/log-file`, '_blank');
+}
+
 setInterval(async () => {
   await loadTasks();
   await pollLogs();
 }, 3000);
 
+loadConfig();
+loadTemplates();
 loadTasks();
 </script>
 </body>
 </html>
 """
+
+
+@app.get("/api/config")
+async def get_config() -> dict:
+    return {"max_running_tasks": MAX_RUNNING_TASKS}
+
+
+@app.get("/api/templates")
+async def list_templates() -> dict:
+    return {"templates": _load_templates()}
+
+
+@app.post("/api/templates")
+async def save_template(req: SaveTemplateRequest) -> dict:
+    templates = _load_templates()
+    item = {
+        "name": req.name.strip(),
+        "project_dir": os.path.abspath(req.project_dir.strip()),
+        "command": req.command.strip(),
+    }
+    if not item["name"] or not item["project_dir"] or not item["command"]:
+        raise HTTPException(status_code=400, detail="模板字段不能为空")
+
+    replaced = False
+    for i, t in enumerate(templates):
+        if t.get("name") == item["name"]:
+            templates[i] = item
+            replaced = True
+            break
+    if not replaced:
+        templates.append(item)
+
+    _save_templates(templates)
+    return {"ok": True, "template": item}
 
 
 @app.post("/api/tasks/start")
@@ -228,6 +359,13 @@ async def start_task(req: StartTaskRequest) -> dict:
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
 
     command = req.command or "python3 examples/debug_pipeline.py"
+
+    if _running_tasks_count() >= MAX_RUNNING_TASKS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"运行中任务已达上限（{MAX_RUNNING_TASKS}），请先停止或等待已有任务结束",
+        )
+
     task_id = uuid.uuid4().hex[:12]
     task = TaskRuntime(
         task_id=task_id,
@@ -263,6 +401,16 @@ async def get_logs(task_id: str, offset: int = 0) -> dict:
         "next_offset": offset + len(lines),
         "lines": lines,
     }
+
+
+@app.get("/api/tasks/{task_id}/log-file")
+async def get_log_file(task_id: str):
+    task = TASKS.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if not task.log_file or not os.path.exists(task.log_file):
+        raise HTTPException(status_code=404, detail="日志文件不存在")
+    return FileResponse(task.log_file, filename=f"{task_id}.log", media_type="text/plain")
 
 
 @app.post("/api/tasks/{task_id}/stop")
