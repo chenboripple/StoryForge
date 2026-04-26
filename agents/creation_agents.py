@@ -547,14 +547,21 @@ class ProofreaderAgent(BaseAgent):
     
     def invoke(self, state):
         """校对（结构化输出 + 终审）"""
-        
-        chapter_text = state.chapters.get(state.current_chapter, "")
-        
+
+        chapter_obj = state.chapters.get(state.current_chapter, "")
+        chapter_text = getattr(chapter_obj, "content", chapter_obj)
+
+        scope = getattr(state, "proofread_scope", "chapter")
+        proofread_context = getattr(state, "proofread_context", {}) or {}
+
         # 1. 使用 PromptAssembler 组装校对 prompt
         prompt = self.prompt_assembler.assemble_proofreader_prompt(
             persona=self.persona,
             chapter_content=chapter_text,
-            characters=state.characters
+            characters=state.characters,
+            world_setting=proofread_context.get("world_setting"),
+            scope=scope,
+            project_docs=proofread_context if scope == "project_docs" else None
         )
         
         # 2. 调用 LLM

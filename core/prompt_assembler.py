@@ -207,41 +207,92 @@ class PromptAssembler:
         persona: Any,
         chapter_content: str,
         characters: List[Any],
-        world_setting: Any = None
+        world_setting: Any = None,
+        scope: str = "chapter",
+        project_docs: Any = None
     ) -> str:
         """
         组装校对 Prompt
-        
-        参考 novel-proofread skill 的 checklist
+
+        scope:
+        - chapter: 按章校对
+        - volume: 按卷校对
+        - book: 按本校对
+        - project_docs: 对大纲/卷纲/世界观/时间线/人物设定做综合校对
         """
         parts = []
-        
+
         # 1. 基础人设
         parts.append(persona.system_prompt())
-        
+
         # 2. 校对 Checklist
         parts.append("\n========== 校对 Checklist ==========")
         parts.append(self._format_proofread_checklist())
-        
-        # 3. 章节内容
-        parts.append(f"\n========== 章节内容 ==========\n{chapter_content}\n")
-        
-        # 4. 人物名单（检查一致性）
+
+        # 3. 校对范围
+        parts.append("\n========== 校对范围 ==========")
+        parts.append(self._format_proofread_scope(scope))
+
+        # 4. 正文内容（chapter/volume/book 场景）
+        if chapter_content:
+            parts.append(f"\n========== 正文内容 ==========\n{chapter_content}\n")
+
+        # 5. 人物名单（检查一致性）
         if characters:
             parts.append("\n========== 人物名单（检查一致性） ==========")
             parts.append(self._format_characters_for_proofread(characters))
-        
-        # 5. 世界观设定（检查一致性）
+
+        # 6. 世界观设定（检查一致性）
         if world_setting:
             parts.append("\n========== 世界观设定（检查一致性） ==========")
             parts.append(str(world_setting))
-        
-        # 6. 输出格式要求
+
+        # 7. 项目综合文档（project_docs 场景）
+        if project_docs:
+            parts.append("\n========== 综合项目文档（大纲/卷纲/设定） ==========")
+            parts.append(self._format_project_docs_for_proofread(project_docs))
+
+        # 8. 输出格式要求
         parts.append("\n========== 输出格式要求 ==========")
         parts.append(self._format_proofread_output_requirements())
-        
+
         return "\n".join(parts)
-    
+
+    def _format_proofread_scope(self, scope: str) -> str:
+        mapping = {
+            "chapter": "按章校对：聚焦当前章节文本的一致性与错误。",
+            "volume": "按卷校对：跨章节检查本卷内时间线、设定和人物连续性。",
+            "book": "按本校对：全书级一致性检查（设定、时间线、人物弧线）。",
+            "project_docs": "综合文档校对：对大纲、卷纲、世界观、时间线、人物设定进行交叉校验。"
+        }
+        return mapping.get(scope, mapping["chapter"])
+
+    def _format_project_docs_for_proofread(self, project_docs: Any) -> str:
+        if not project_docs:
+            return "暂无"
+        if isinstance(project_docs, str):
+            return project_docs
+        if isinstance(project_docs, dict):
+            parts = []
+            ordered_keys = [
+                ("outline", "总大纲"),
+                ("volume_outline", "卷纲"),
+                ("worldview", "世界观"),
+                ("timeline", "时间线"),
+                ("character_profiles", "人物设定")
+            ]
+            used = set()
+            for key, title in ordered_keys:
+                if key in project_docs and project_docs[key]:
+                    parts.append(f"\n【{title}】\n{project_docs[key]}")
+                    used.add(key)
+            for key, value in project_docs.items():
+                if key in used or not value:
+                    continue
+                parts.append(f"\n【{key}】\n{value}")
+            return "\n".join(parts) if parts else "暂无"
+        return str(project_docs)
+
     def _format_humanization_rules(self) -> str:
         """格式化人味化规则"""
         parts = ["\n========== 人味化规则（必须遵守） =========="]

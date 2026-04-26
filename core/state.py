@@ -76,6 +76,11 @@ class NovelState:
     reviews: Dict[int, List[Any]] = field(default_factory=dict)
     structured_reviews: Dict[int, List[Any]] = field(default_factory=dict)
 
+    # 校对范围控制：chapter | volume | book | project_docs
+    proofread_scope: str = "chapter"
+    # 可选的综合校对输入（大纲/卷纲/世界观/时间线/人物设定等）
+    proofread_context: Dict[str, Any] = field(default_factory=dict)
+
     # 萃取层
     knowledge_base: Dict[str, Any] = field(default_factory=dict)
 
