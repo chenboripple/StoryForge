@@ -3,7 +3,8 @@ NovelForge - 示例：运行 Pipeline
 """
 
 import sys
-sys.path.insert(0, '/Users/ripple/NovelForge')
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.state import NovelState, CharacterInfo
 from pipeline.novel_pipeline import create_pipeline

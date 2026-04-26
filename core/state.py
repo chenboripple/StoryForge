@@ -140,3 +140,151 @@ class NovelState:
         if self.outline:
             context += f"\n大纲摘要：{self.outline[:200]}..."
         return context
+
+
+# ==================== 新：分层状态（推荐使用）====================
+
+@dataclass
+class NovelMetadata:
+    """小说元数据"""
+    novel_id: str = ""
+    novel_title: str = ""
+    genre: str = ""
+    target_word_count: int = 3000
+    author: str = ""
+
+
+@dataclass
+class CreationState:
+    """创作层状态（新结构）"""
+    # 大纲
+    concept: str = ""
+    outline: str = ""
+    chapter_outlines: Dict[int, str] = field(default_factory=dict)  # 章级细纲
+    
+    # 章节
+    chapters: Dict[int, Any] = field(default_factory=dict)  # 存 ChapterContent 对象
+    chapter_status: Dict[int, ChapterStatus] = field(default_factory=dict)
+    
+    # 审稿
+    current_chapter: int = 1
+    review_round: int = 0
+    max_review_rounds: int = 3
+    reviews: Dict[int, List[Any]] = field(default_factory=dict)  # 存 ReviewRecord
+    structured_reviews: Dict[int, List[Any]] = field(default_factory=dict)  # 存 ReviewResult
+
+
+@dataclass
+class ExtractionState:
+    """萃取层状态"""
+    knowledge_base: Dict[str, Any] = field(default_factory=dict)
+    # 结构：
+    # {
+    #   "characters": {role_name: {"arc": [...], "traits": [...], ...}},
+    #   "world": {"locations": [...], "rules": [...], ...},
+    #   "plots": {"key_scenes": [...], "quotes": [...], ...}
+    # }
+
+
+@dataclass
+class IPState:
+    """IP 生成层状态"""
+    character_ips: Dict[str, Dict] = field(default_factory=dict)
+    visual_assets: Dict[str, List[Dict]] = field(default_factory=dict)
+    video_scripts: List[Dict] = field(default_factory=list)
+
+
+@dataclass
+class NovelStateV2:
+    """
+    新状态对象：分层设计，各层只关心自己的数据
+    向后兼容：提供访问旧字段的属性
+    """
+    # 核心
+    metadata: NovelMetadata = field(default_factory=NovelMetadata)
+    creation: CreationState = field(default_factory=CreationState)
+    extraction: Optional[ExtractionState] = None
+    ip_generation: Optional[IPState] = None
+    
+    # 记忆系统
+    memory_dict: Optional[Dict] = None
+    
+    # 控制
+    current_stage: PipelineStage = PipelineStage.CREATION
+    error_message: str = ""
+    human_feedback: Optional[str] = None
+    should_pause: bool = False
+    
+    # 向后兼容属性访问
+    @property
+    def novel_id(self): return self.metadata.novel_id
+    @novel_id.setter
+    def novel_id(self, value): self.metadata.novel_id = value
+    
+    @property
+    def novel_title(self): return self.metadata.novel_title
+    @novel_title.setter
+    def novel_title(self, value): self.metadata.novel_title = value
+    
+    @property
+    def genre(self): return self.metadata.genre
+    @genre.setter
+    def genre(self, value): self.metadata.genre = value
+    
+    @property
+    def target_word_count(self): return self.metadata.target_word_count
+    @target_word_count.setter
+    def target_word_count(self, value): self.metadata.target_word_count = value
+    
+    @property
+    def concept(self): return self.creation.concept
+    @concept.setter
+    def concept(self, value): self.creation.concept = value
+    
+    @property
+    def outline(self): return self.creation.outline
+    @outline.setter
+    def outline(self, value): self.creation.outline = value
+    
+    @property
+    def current_chapter(self): return self.creation.current_chapter
+    @current_chapter.setter
+    def current_chapter(self, value): self.creation.current_chapter = value
+    
+    @property
+    def review_round(self): return self.creation.review_round
+    @review_round.setter
+    def review_round(self, value): self.creation.review_round = value
+    
+    @property
+    def max_review_rounds(self): return self.creation.max_review_rounds
+    @max_review_rounds.setter
+    def max_review_rounds(self, value): self.creation.max_review_rounds = value
+    
+    @property
+    def chapters(self): return self.creation.chapters
+    
+    @property
+    def chapter_status(self): return self.creation.chapter_status
+    
+    @property
+    def reviews(self): return self.creation.reviews
+    
+    # 旧接口兼容的方法
+    def get_current_chapter_status(self):
+        return self.creation.chapter_status.get(
+            self.creation.current_chapter, ChapterStatus.PENDING
+        )
+    
+    def get_latest_review(self):
+        chapter_reviews = self.creation.reviews.get(self.creation.current_chapter, [])
+        return chapter_reviews[-1] if chapter_reviews else None
+    
+    def to_context_string(self):
+        context = f"""
+小说：{self.metadata.novel_title or '未命名'}
+类型：{self.metadata.genre or '未指定'}
+当前章节：第{self.creation.current_chapter}章
+章节状态：{self.get_current_chapter_status().value}
+"""
+        return context
