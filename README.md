@@ -11,27 +11,11 @@
 - **记忆系统**: 事件时间线 + 角色状态追踪
 - **人味化规则**: 禁用 AI 常见句式，提升文本自然度
 
-## 版本演进
-
-| 版本 | 核心改进 | 状态 |
-|------|---------|------|
-| V1 | 基础 Pipeline（写作→审稿→修改→校对） | ✅ 稳定 |
-| V2 | 结构化输出 + 记忆系统 + 错误处理 | ✅ 稳定 |
-| V3 | 大纲细化 + PromptAssembler + AI味评估 + 终审机制 | ✅ 稳定 |
-
 ## 快速开始
 
 ```bash
 pip install -r requirements.txt
-
-# V3 版本（推荐）
-python examples/debug_pipeline_v3.py
-
-# V2 版本
-python examples/debug_pipeline_v2.py
-
-# V1 版本
-python examples/demo_pipeline.py
+python examples/debug_pipeline.py
 ```
 
 ## 项目结构
@@ -47,23 +31,17 @@ StoryForge/
 │   ├── prompt_assembler.py  # 动态 Prompt 组装
 │   └── utils/         # 工具函数
 ├── agents/            # Agent 角色定义
-│   ├── creation_agents.py      # V1 Agent
-│   ├── creation_agents_v2.py   # V2 Agent（结构化输出）
-│   └── creation_agents_v3.py   # V3 Agent（AI味评估）
+│   └── creation_agents.py    # 墨川/青锋/砚清
 ├── pipeline/          # LangGraph 流程定义
-│   ├── novel_pipeline.py       # V1 Pipeline
-│   ├── novel_pipeline_v2.py    # V2 Pipeline
-│   └── novel_pipeline_v3.py    # V3 Pipeline（大纲细化）
+│   └── novel_pipeline.py     # 完整 Pipeline
 ├── examples/          # 示例和调试脚本
-│   ├── demo_pipeline.py        # V1 演示
-│   ├── demo_pipeline_v2.py     # V2 演示
-│   └── debug_pipeline_v3.py    # V3 调试（推荐）
+│   └── debug_pipeline.py     # 调试脚本（推荐）
 ├── stages/            # 三阶段实现（创作/萃取/IP）
 ├── tests/             # 测试
 └── docs/              # 文档
 ```
 
-## V3 核心特性
+## 核心特性
 
 ### 1. 大纲细化阶段
 - 基于卷纲生成章级细纲
@@ -91,18 +69,18 @@ StoryForge/
 
 ## 调试
 
-V3 调试脚本会自动保存：
+调试脚本会自动保存：
 - 每个 LLM 调用的完整 prompt
 - 所有 prompt 调用历史（JSON）
 - Pipeline 运行前后的状态快照
 
 ```bash
 # 查看保存的 prompt
-cat debug_output_v3/prompt_*.txt
+cat debug_output/prompt_*.txt
 
 # 查看状态变化
-cat debug_output_v3/state_initial.json
-cat debug_output_v3/state_final_*.json
+cat debug_output/state_initial.json
+cat debug_output/state_final_*.json
 ```
 
 ## 角色系统

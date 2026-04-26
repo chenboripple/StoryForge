@@ -1,10 +1,6 @@
 """
-StoryForge - 重构后的 Agent 基类
-改进点：
-1. 支持结构化输出（JSON mode）
-2. 集成记忆系统
-3. 错误处理装饰器
-4. 动态 Prompt 组装
+StoryForge - Agent 基类
+支持结构化输出（JSON mode）、记忆系统、错误处理
 """
 
 from dataclasses import dataclass, field
