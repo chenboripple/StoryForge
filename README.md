@@ -77,6 +77,14 @@ uvicorn web_console.app:app --reload --port 8787
 浏览器访问 `http://127.0.0.1:8787`。
 支持启动任务、查看状态、查看日志、停止任务，以及模板保存、并发上限控制、日志下载。
 
+新增人物 IP 操作区（手动触发）：
+- 先选择小说（从 `debug_output/state_final_*.json` 自动发现）
+- 再选择人物（支持多选）
+- 可点击“生成人物IP”或“重新生成（覆盖）”
+
+本地向量库写入：`local_store/vector_store.jsonl`
+人物 IP 资产落盘：`local_store/ip_assets/<novel_id>/<character>.json`
+
 ## 项目结构
 
 ```
