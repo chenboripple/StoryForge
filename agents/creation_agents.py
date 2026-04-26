@@ -6,7 +6,7 @@ StoryForge - 创作 Agent
 from datetime import datetime
 from typing import Optional
 
-from core.agent_v2 import BaseAgent, AgentPersona
+from core.agent import BaseAgent, AgentPersona
 from core.memory import StoryMemory
 from core.schema import (
     ReviewResult, ProofreadResult, ChapterContent,
@@ -149,7 +149,7 @@ class WriterAgent(BaseAgent):
         self.prompt_assembler = prompt_assembler or PromptAssembler()
     
     def invoke(self, state):
-        """写作章节（V3）"""
+        """写作章节"""
         
         # 1. 获取章节计划
         chapter_plan = self._get_chapter_plan(state)
@@ -389,7 +389,7 @@ class ReviewerAgent(BaseAgent):
             summary=result_dict.get("summary", "")
         )
         
-        # 添加 AI味评估（V3新增）
+        # 添加 AI味评估
         ai_flavor = result_dict.get("ai_flavor", {})
         review.ai_flavor_score = ai_flavor.get("score", 5)
         review.ai_flavor_level = ai_flavor.get("level", "medium")
@@ -599,7 +599,7 @@ class ProofreaderAgent(BaseAgent):
             summary=result_dict.get("summary", "")
         )
         
-        # 添加终审判定（V3新增）
+        # 添加终审判定
         proofread.verdict = result_dict.get("verdict", "需返修")
         
         return proofread

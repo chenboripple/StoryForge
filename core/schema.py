@@ -32,7 +32,7 @@ class ReviewIssue:
     location: str       # 问题位置（如"第3段"）
     description: str    # 问题描述
     suggestion: str     # 修改建议
-    type: str = ""      # 问题类型（可选，兼容 V3）
+    type: str = ""      # 问题类型（可选）
 
 
 @dataclass

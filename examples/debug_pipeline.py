@@ -221,6 +221,16 @@ def save_state_to_json(state, filename: str = None):
     
     json_file = os.path.join(DEBUG_DIR, filename)
     
+    def _serialize_chapter(ch):
+        if isinstance(ch, dict):
+            return ch
+        if hasattr(ch, "__dict__"):
+            return {
+                k: (v.value if hasattr(v, "value") else v)
+                for k, v in ch.__dict__.items()
+            }
+        return str(ch)
+
     state_dict = {
         "novel_id": state.novel_id,
         "novel_title": state.novel_title,
@@ -230,7 +240,7 @@ def save_state_to_json(state, filename: str = None):
         "chapter_status": {k: v.value if hasattr(v, 'value') else v for k, v in state.chapter_status.items()},
         "review_round": state.review_round,
         "max_review_rounds": state.max_review_rounds,
-        "chapters": state.chapters
+        "chapters": {k: _serialize_chapter(v) for k, v in state.chapters.items()}
     }
     
     with open(json_file, "w", encoding="utf-8") as f:
@@ -241,10 +251,10 @@ def save_state_to_json(state, filename: str = None):
 
 
 def main():
-    """运行 V3 调试脚本"""
+    """运行调试脚本"""
     
     print("=" * 80)
-    print("StoryForge Pipeline V3 - 调试模式")
+    print("StoryForge Pipeline - 调试模式")
     print("=" * 80)
     print(f"Debug output directory: {os.path.abspath(DEBUG_DIR)}")
     print()
@@ -261,7 +271,7 @@ def main():
     # 1. 准备初始状态
     print("[Debug] 准备初始状态...")
     state = NovelState(
-        novel_id="debug_v3_001",
+        novel_id="debug_001",
         novel_title="熵塔",
         genre="科幻末日",
         target_word_count=3000,
@@ -340,7 +350,7 @@ def main():
         print(f"审稿轮次：{result.review_round}")
         print(f"最终阶段：{result.current_stage.value}")
         
-        # 显示 AI味等级（V3新增）
+        # 显示 AI味等级
         if hasattr(result, 'structured_reviews') and 1 in result.structured_reviews:
             last_review = result.structured_reviews[1][-1]
             ai_flavor_level = getattr(last_review, 'ai_flavor_level', 'unknown')
@@ -360,7 +370,14 @@ def main():
         
         if 1 in result.chapters:
             print(f"\n章节预览（前300字）：")
-            print(result.chapters[1][:300] + "...")
+            chapter_obj = result.chapters[1]
+            if hasattr(chapter_obj, "content"):
+                preview = chapter_obj.content[:300]
+            elif isinstance(chapter_obj, str):
+                preview = chapter_obj[:300]
+            else:
+                preview = str(chapter_obj)[:300]
+            print(preview + "...")
         
         if 1 in result.reviews:
             print(f"\n审稿记录：")

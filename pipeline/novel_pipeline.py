@@ -165,7 +165,7 @@ class NovelPipeline:
         return state
     
     def _review_router(self, state: NovelState) -> str:
-        """审稿路由（V3 改进：检查 AI味等级）"""
+        """审稿路由（检查 AI味等级）"""
         if state.error_message:
             print(f"❌ 错误：{state.error_message}")
             return "max_retries"
@@ -179,7 +179,7 @@ class NovelPipeline:
             print(f"⚠️ 第{state.current_chapter}章审稿{state.review_round}轮未通过，强制进入校对")
             return "max_retries"
         
-        # 获取结构化审稿结果（V3新增）
+        # 获取结构化审稿结果
         ai_flavor_level = "medium"
         verdict = None
         
@@ -218,10 +218,10 @@ class NovelPipeline:
             return "rewrite"
     
     def _proofread_router(self, state: NovelState) -> str:
-        """校对路由（V3 改进：检查终审判定）"""
+        """校对路由（检查终审判定）"""
         status = state.get_current_chapter_status()
         
-        # 获取结构化校对结果（V3新增）
+        # 获取结构化校对结果
         verdict = None
         if hasattr(state, 'structured_reviews') and state.current_chapter in state.structured_reviews:
             review = state.structured_reviews[state.current_chapter][-1]
@@ -265,7 +265,7 @@ class NovelPipeline:
         return state
     
     def run(self, initial_state: NovelState) -> NovelState:
-        """运行 Pipeline V3"""
+        """运行 Pipeline"""
         print(f"🚀 启动 StoryForge Pipeline")
         print(f"📚 小说：{initial_state.novel_title or '未命名'}")
         print(f"🎯 目标：创作第{initial_state.current_chapter}章")
