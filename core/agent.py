@@ -10,7 +10,7 @@ import json
 
 from core.schema import ReviewResult, ProofreadResult, ChapterContent
 from core.memory import StoryMemory
-from core.utils.errors import ErrorHandler, with_error_handler
+from core.utils.errors import ErrorHandler, RetryWithBackoff
 
 
 @dataclass
@@ -87,6 +87,10 @@ class BaseAgent(ABC):
         self.error_handler = error_handler or ErrorHandler()
         self.use_json_mode = use_json_mode
         self.callbacks: List[Callable] = []
+        self.retry_executor = RetryWithBackoff(
+            max_retries=self.error_handler.max_retries + 1,
+            base_delay=1.0
+        )
     
     def add_callback(self, callback: Callable):
         self.callbacks.append(callback)
@@ -118,30 +122,53 @@ class BaseAgent(ABC):
             json_schema: JSON 格式要求（如 ReviewResult 的 schema）
             max_retries: 解析失败时重试次数
         """
-        if not self.llm_client:
-            raise ValueError(f"{self.persona.name} 未配置 LLM 客户端")
-        
         # 组装 prompt
         prompt = self._assemble_prompt(task, context, json_schema)
-        
+        return self._call_llm_raw(
+            prompt=prompt,
+            json_mode=json_schema is not None,
+            task=task,
+            temperature=temperature,
+            max_retries=max_retries
+        )
+
+    def _call_llm_raw(
+        self,
+        prompt: str,
+        json_mode: bool = False,
+        task: str = "",
+        temperature: Optional[float] = None,
+        max_retries: int = 2
+    ) -> Union[str, Dict]:
+        """统一 LLM 调用入口：重试 + JSON 解析兜底 + 事件通知"""
+        if not self.llm_client:
+            raise ValueError(f"{self.persona.name} 未配置 LLM 客户端")
+
         self._notify("llm_request", {
             "agent": self.persona.name,
-            "task": task[:100],
-            "json_mode": json_schema is not None
+            "task": (task or "raw_prompt")[:100],
+            "json_mode": json_mode
         })
-        
-        # 调用 LLM
-        result = self.llm_client(prompt, temperature=temperature)
-        
-        # 如果要求 JSON，尝试解析
-        if json_schema:
-            result = self._parse_json_result(result, max_retries)
-        
+
+        def _invoke_once():
+            if temperature is None:
+                return self.llm_client(prompt)
+            try:
+                return self.llm_client(prompt, temperature=temperature)
+            except TypeError:
+                return self.llm_client(prompt)
+
+        raw_result = self.retry_executor.execute(_invoke_once)
+        result: Union[str, Dict] = raw_result
+
+        if json_mode:
+            result = self._parse_json_result(str(raw_result), max_retries)
+
         self._notify("llm_response", {
             "agent": self.persona.name,
             "result_length": len(str(result))
         })
-        
+
         return result
     
     def _assemble_prompt(

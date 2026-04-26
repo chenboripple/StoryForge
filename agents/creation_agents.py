@@ -13,7 +13,7 @@ from core.schema import (
     REVIEW_JSON_PROMPT, PROOFREAD_JSON_PROMPT
 )
 from core.prompt_assembler import PromptAssembler
-from core.utils.errors import with_error_handler
+
 
 
 # ==================== 角色人设（保持兼容） ====================
@@ -235,23 +235,12 @@ class WriterAgent(BaseAgent):
         return "\n".join(parts)
     
     def _call_llm_raw(self, prompt):
-        """直接调用 LLM（不使用 _call_llm 的自动组装）"""
-        if not self.llm_client:
-            raise ValueError(f"{self.persona.name} 未配置 LLM 客户端")
-        
-        self._notify("llm_request", {
-            "agent": self.persona.name,
-            "task": "写作章节（使用动态Prompt）"
-        })
-        
-        result = self.llm_client(prompt)
-        
-        self._notify("llm_response", {
-            "agent": self.persona.name,
-            "result_length": len(result)
-        })
-        
-        return result
+        """调用基类统一 LLM 入口"""
+        return super()._call_llm_raw(
+            prompt=prompt,
+            json_mode=False,
+            task="写作章节（使用动态Prompt）"
+        )
     
     def _format_characters(self, characters):
         if not characters:
@@ -331,28 +320,12 @@ class ReviewerAgent(BaseAgent):
         return state
     
     def _call_llm_raw(self, prompt, json_mode=False):
-        """直接调用 LLM"""
-        if not self.llm_client:
-            raise ValueError(f"{self.persona.name} 未配置 LLM 客户端")
-        
-        self._notify("llm_request", {
-            "agent": self.persona.name,
-            "task": "审稿（结构化输出）",
-            "json_mode": json_mode
-        })
-        
-        result = self.llm_client(prompt)
-        
-        if json_mode:
-            import json
-            result = json.loads(_extract_json(result))
-        
-        self._notify("llm_response", {
-            "agent": self.persona.name,
-            "result_length": len(str(result))
-        })
-        
-        return result
+        """调用基类统一 LLM 入口"""
+        return super()._call_llm_raw(
+            prompt=prompt,
+            json_mode=json_mode,
+            task="审稿（结构化输出）"
+        )
     
     def _get_chapter_plan(self, state):
         """获取章节计划"""
@@ -521,9 +494,11 @@ class ReviserAgent(BaseAgent):
         return "\n".join(parts)
     
     def _call_llm_raw(self, prompt):
-        if not self.llm_client:
-            raise ValueError(f"{self.persona.name} 未配置 LLM 客户端")
-        return self.llm_client(prompt)
+        return super()._call_llm_raw(
+            prompt=prompt,
+            json_mode=False,
+            task="根据审稿意见修改"
+        )
 
 
 class ProofreaderAgent(BaseAgent):
@@ -582,16 +557,11 @@ class ProofreaderAgent(BaseAgent):
         return state
     
     def _call_llm_raw(self, prompt, json_mode=False):
-        if not self.llm_client:
-            raise ValueError(f"{self.persona.name} 未配置 LLM 客户端")
-        
-        result = self.llm_client(prompt)
-        
-        if json_mode:
-            import json
-            result = json.loads(_extract_json(result))
-        
-        return result
+        return super()._call_llm_raw(
+            prompt=prompt,
+            json_mode=json_mode,
+            task="校对（结构化输出 + 终审）"
+        )
     
     def _parse_proofread_result(self, result_dict):
         from core.schema import ProofreadIssue
