@@ -18,6 +18,17 @@ pip install -r requirements.txt
 python examples/debug_pipeline.py
 ```
 
+## 操作页面（MVP）
+
+启动命令：
+
+```bash
+uvicorn web_console.app:app --reload --port 8787
+```
+
+浏览器访问 `http://127.0.0.1:8787`。
+支持启动任务、查看状态、查看日志、停止任务。
+
 ## 项目结构
 
 ```
@@ -36,6 +47,7 @@ StoryForge/
 │   └── novel_pipeline.py     # 完整 Pipeline
 ├── examples/          # 示例和调试脚本
 │   └── debug_pipeline.py     # 调试脚本（推荐）
+├── web_console/       # 操作页面（FastAPI）
 ├── stages/            # 三阶段实现（创作/萃取/IP）
 ├── tests/             # 测试
 └── docs/              # 文档
