@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -169,7 +171,20 @@ def _json_default(value: Any) -> Any:
 
 
 def main() -> None:
-    settings, sources = get_settings_with_sources()
+    parser = argparse.ArgumentParser(description="StoryForge 配置诊断")
+    parser.add_argument("--check", action="store_true", help="仅校验配置是否完整有效，成功返回 0")
+    args = parser.parse_args()
+
+    try:
+        settings, sources = get_settings_with_sources()
+    except Exception as exc:
+        print(f"CONFIG_INVALID: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    if args.check:
+        print("CONFIG_OK")
+        return
+
     payload = {
         "settings": asdict(settings),
         "sources": sources,

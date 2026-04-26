@@ -60,6 +60,12 @@ python examples/debug_pipeline.py
 python -m core.settings
 ```
 
+仅做配置有效性校验（成功返回 0，失败返回非 0）：
+
+```bash
+python -m core.settings --check
+```
+
 ## 操作页面（MVP）
 
 启动命令：
