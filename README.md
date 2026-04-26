@@ -24,7 +24,7 @@ python examples/debug_pipeline.py
 
 默认读取用户配置文件：`~/.storyforge/config.json`。
 
-优先级：**环境变量 > `~/.storyforge/config.json` > 代码默认值**。
+优先级：**环境变量 > `~/.storyforge/config.json`**（无代码默认值，缺失即报错）。
 
 配置文件示例：
 
@@ -44,15 +44,15 @@ python examples/debug_pipeline.py
 }
 ```
 
-支持的环境变量：
+必填配置项（可在环境变量或配置文件中提供）：
 
-| 环境变量 | 默认值 | 说明 |
-|---|---|---|
-| `STORYFORGE_MAX_RUNNING_TASKS` | `2` | 控制台运行中任务上限 |
-| `STORYFORGE_DEFAULT_COMMAND` | `python3 examples/debug_pipeline.py` | 控制台默认启动命令 |
-| `STORYFORGE_TEMPLATE_FILE` | `web_console/templates.json` | 模板存储文件 |
-| `STORYFORGE_DEBUG_DIR` | `debug_output` | 调试输出目录 |
-| `STORYFORGE_DEFAULT_TARGET_WORD_COUNT` | `3000` | NovelState 默认章节目标字数 |
+| 环境变量 | 配置路径 |
+|---|---|
+| `STORYFORGE_MAX_RUNNING_TASKS` | `console.max_running_tasks` |
+| `STORYFORGE_DEFAULT_COMMAND` | `console.default_command` |
+| `STORYFORGE_TEMPLATE_FILE` | `console.template_file` |
+| `STORYFORGE_DEBUG_DIR` | `debug.output_dir` |
+| `STORYFORGE_DEFAULT_TARGET_WORD_COUNT` | `pipeline.default_target_word_count` |
 
 ## 操作页面（MVP）
 

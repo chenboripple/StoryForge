@@ -14,83 +14,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 USER_CONFIG_FILE = Path.home() / ".storyforge" / "config.json"
 
 
-def _load_user_config() -> dict[str, Any]:
-    if not USER_CONFIG_FILE.exists():
-        return {}
-    try:
-        data = json.loads(USER_CONFIG_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _config_get(config: dict[str, Any], path: str, default: Any) -> Any:
-    current: Any = config
-    for key in path.split("."):
-        if not isinstance(current, dict) or key not in current:
-            return default
-        current = current[key]
-    return current
-
-
-def _env_or_config_int(
-    env_name: str,
-    config: dict[str, Any],
-    config_path: str,
-    default: int,
-    minimum: int | None = None,
-) -> int:
-    raw = os.getenv(env_name)
-    if raw is not None:
-        try:
-            value = int(raw)
-        except ValueError:
-            value = default
-    else:
-        cfg_value = _config_get(config, config_path, default)
-        try:
-            value = int(cfg_value)
-        except (TypeError, ValueError):
-            value = default
-
-    if minimum is not None:
-        value = max(minimum, value)
-    return value
-
-
-def _env_or_config_str(
-    env_name: str,
-    config: dict[str, Any],
-    config_path: str,
-    default: str,
-) -> str:
-    raw = os.getenv(env_name)
-    if raw:
-        return raw
-    value = _config_get(config, config_path, default)
-    return str(value) if value is not None else default
-
-
-def _env_or_config_path(
-    env_name: str,
-    config: dict[str, Any],
-    config_path: str,
-    default: Path,
-) -> Path:
-    raw = os.getenv(env_name)
-    if raw:
-        return Path(raw).expanduser().resolve()
-
-    value = _config_get(config, config_path, None)
-    if value is None:
-        return default
-
-    try:
-        return Path(str(value)).expanduser().resolve()
-    except Exception:
-        return default
-
-
 @dataclass(frozen=True)
 class ConsoleSettings:
     max_running_tasks: int
@@ -117,47 +40,106 @@ class StoryForgeSettings:
     pipeline: PipelineSettings
 
 
+def _load_user_config() -> dict[str, Any]:
+    if not USER_CONFIG_FILE.exists():
+        return {}
+    try:
+        data = json.loads(USER_CONFIG_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _config_get(config: dict[str, Any], path: str) -> Any:
+    current: Any = config
+    for key in path.split("."):
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def _required_value(env_name: str, config: dict[str, Any], config_path: str) -> Any:
+    env_value = os.getenv(env_name)
+    if env_value is not None and str(env_value).strip() != "":
+        return env_value
+
+    config_value = _config_get(config, config_path)
+    if config_value is not None and str(config_value).strip() != "":
+        return config_value
+
+    raise RuntimeError(
+        f"缺少必填配置: {config_path} (env: {env_name}). "
+        f"请在 {USER_CONFIG_FILE} 或环境变量中设置。"
+    )
+
+
+def _required_int(
+    env_name: str,
+    config: dict[str, Any],
+    config_path: str,
+    minimum: int | None = None,
+) -> int:
+    raw = _required_value(env_name, config, config_path)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"配置必须是整数: {config_path}，当前值: {raw}") from exc
+
+    if minimum is not None and value < minimum:
+        raise RuntimeError(f"配置必须 >= {minimum}: {config_path}，当前值: {value}")
+    return value
+
+
+def _required_str(env_name: str, config: dict[str, Any], config_path: str) -> str:
+    raw = _required_value(env_name, config, config_path)
+    value = str(raw).strip()
+    if not value:
+        raise RuntimeError(f"配置不能为空: {config_path}")
+    return value
+
+
+def _required_path(env_name: str, config: dict[str, Any], config_path: str) -> Path:
+    raw = _required_str(env_name, config, config_path)
+    return Path(raw).expanduser().resolve()
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> StoryForgeSettings:
     user_config = _load_user_config()
 
     console = ConsoleSettings(
-        max_running_tasks=_env_or_config_int(
+        max_running_tasks=_required_int(
             "STORYFORGE_MAX_RUNNING_TASKS",
             user_config,
             "console.max_running_tasks",
-            2,
             minimum=1,
         ),
-        default_command=_env_or_config_str(
+        default_command=_required_str(
             "STORYFORGE_DEFAULT_COMMAND",
             user_config,
             "console.default_command",
-            "python3 examples/debug_pipeline.py",
         ),
-        template_file=_env_or_config_path(
+        template_file=_required_path(
             "STORYFORGE_TEMPLATE_FILE",
             user_config,
             "console.template_file",
-            PROJECT_ROOT / "web_console" / "templates.json",
         ),
     )
 
     debug = DebugSettings(
-        output_dir=_env_or_config_path(
+        output_dir=_required_path(
             "STORYFORGE_DEBUG_DIR",
             user_config,
             "debug.output_dir",
-            PROJECT_ROOT / "debug_output",
         ),
     )
 
     pipeline = PipelineSettings(
-        default_target_word_count=_env_or_config_int(
+        default_target_word_count=_required_int(
             "STORYFORGE_DEFAULT_TARGET_WORD_COUNT",
             user_config,
             "pipeline.default_target_word_count",
-            3000,
             minimum=500,
         ),
     )
