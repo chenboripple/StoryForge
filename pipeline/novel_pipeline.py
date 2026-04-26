@@ -7,6 +7,7 @@ from langgraph.graph import StateGraph, END
 from typing import Dict, Callable, Any, Optional
 
 from core.state import NovelState, ChapterStatus, PipelineStage
+from core.schema import ReviewVerdict
 from core.memory import StoryMemory
 from core.prompt_assembler import PromptAssembler
 from core.outline import OutlineGenerator, ChapterPlan
@@ -182,28 +183,36 @@ class NovelPipeline:
         # 获取结构化审稿结果
         ai_flavor_level = "medium"
         verdict = None
-        
+
         if hasattr(state, 'structured_reviews') and state.current_chapter in state.structured_reviews:
             review = state.structured_reviews[state.current_chapter][-1]
             ai_flavor_level = getattr(review, 'ai_flavor_level', "medium")
             verdict = getattr(review, 'verdict', None)
-        
+
         # 如果 AI味等级是 high，要求重写
         if ai_flavor_level == "high":
             print(f"🔄 AI味过重（{ai_flavor_level}），要求重写")
             return "rewrite"
-        
-        # 使用 verdict 决定路由
-        if verdict:
-            if verdict.value == "pass":
-                print(f"✅ 第{state.current_chapter}章审稿通过，进入校对")
-                return "approve"
-            elif verdict.value == "rewrite":
-                print(f"🔄 第{state.current_chapter}章需要重写")
-                return "rewrite"
-            else:
-                print(f"📝 第{state.current_chapter}章需要修改，第{state.review_round + 1}轮修改")
-                return "revise"
+
+        # 使用 verdict 决定路由（统一归一化到字符串）
+        if isinstance(verdict, ReviewVerdict):
+            verdict_value = verdict.value
+        elif hasattr(verdict, 'value'):
+            verdict_value = verdict.value
+        elif isinstance(verdict, str):
+            verdict_value = verdict.strip().lower()
+        else:
+            verdict_value = None
+
+        if verdict_value == "pass":
+            print(f"✅ 第{state.current_chapter}章审稿通过，进入校对")
+            return "approve"
+        if verdict_value == "rewrite":
+            print(f"🔄 第{state.current_chapter}章需要重写")
+            return "rewrite"
+        if verdict_value == "revise":
+            print(f"📝 第{state.current_chapter}章需要修改，第{state.review_round + 1}轮修改")
+            return "revise"
         
         # 回退到原逻辑（分数）
         score = latest.score
@@ -220,27 +229,36 @@ class NovelPipeline:
     def _proofread_router(self, state: NovelState) -> str:
         """校对路由（检查终审判定）"""
         status = state.get_current_chapter_status()
-        
-        # 获取结构化校对结果
+
+        # 获取结构化校对结果（专用容器，避免与审稿结果混用）
         verdict = None
-        if hasattr(state, 'structured_reviews') and state.current_chapter in state.structured_reviews:
-            review = state.structured_reviews[state.current_chapter][-1]
-            verdict = getattr(review, 'verdict', None)
-        
-        # 如果终审判定是"需返修"，返回修改
+        chapter_results = getattr(state, 'proofread_results', {}).get(state.current_chapter, [])
+        if chapter_results:
+            latest = chapter_results[-1]
+            verdict = getattr(latest, 'verdict', None)
+            if hasattr(verdict, 'value'):
+                verdict = verdict.value
+            if isinstance(verdict, str):
+                verdict = verdict.strip()
+
         if verdict == "需返修":
             print(f"📝 第{state.current_chapter}章需要返修")
             return "fail"
-        
-        if status == ChapterStatus.APPROVED or verdict == "可发布" or verdict == "可交付":
+
+        if verdict in {"可发布", "可交付"}:
             print(f"✅ 第{state.current_chapter}章校对通过，进入萃取阶段")
             return "pass"
-        elif state.review_round >= state.max_review_rounds + 2:
+
+        if status == ChapterStatus.APPROVED:
+            print(f"✅ 第{state.current_chapter}章校对通过，进入萃取阶段")
+            return "pass"
+
+        if state.review_round >= state.max_review_rounds + 2:
             print(f"⚠️ 第{state.current_chapter}章校对多次未通过，强制进入萃取阶段")
             return "pass"
-        else:
-            print(f"📝 第{state.current_chapter}章校对发现问题，返回修改")
-            return "fail"
+
+        print(f"📝 第{state.current_chapter}章校对发现问题，返回修改")
+        return "fail"
     
     def _knowledge_extractor(self, state: NovelState) -> NovelState:
         """知识萃取（阶段二）"""

@@ -187,9 +187,7 @@ class WriterAgent(BaseAgent):
             modified_at=datetime.now().isoformat()
         )
         
-        state.chapters[state.current_chapter] = chapter_text
-        state.creation = getattr(state, 'creation', {})
-        state.creation.setdefault('chapters', {})[state.current_chapter] = chapter_content
+        state.chapters[state.current_chapter] = chapter_content
         
         state.chapter_status[state.current_chapter] = ChapterStatus.DRAFT
         state.review_round = 0
@@ -267,7 +265,8 @@ class WriterAgent(BaseAgent):
         recent = []
         for i in range(max(1, state.current_chapter - 2), state.current_chapter):
             if i in state.chapters:
-                content = state.chapters[i][:200]
+                chapter_obj = state.chapters[i]
+                content = getattr(chapter_obj, "text", chapter_obj)[:200]
                 recent.append(f"第{i}章结尾：{content}...")
         return "\n".join(recent)
 
@@ -294,7 +293,8 @@ class ReviewerAgent(BaseAgent):
     def invoke(self, state):
         """审稿（结构化输出 + AI味评估）"""
         
-        chapter_text = state.chapters.get(state.current_chapter, "")
+        chapter_obj = state.chapters.get(state.current_chapter, "")
+        chapter_text = getattr(chapter_obj, "text", chapter_obj)
         if not chapter_text:
             state.error_message = f"第{state.current_chapter}章无内容可审"
             return state
@@ -366,7 +366,8 @@ class ReviewerAgent(BaseAgent):
         """获取前一章内容"""
         prev = state.current_chapter - 1
         if prev > 0 and prev in state.chapters:
-            return state.chapters[prev]
+            prev_chapter = state.chapters[prev]
+            return getattr(prev_chapter, "text", prev_chapter)
         return ""
     
     def _parse_review_result(self, result_dict):
@@ -453,7 +454,8 @@ class ReviserAgent(BaseAgent):
     def invoke(self, state):
         """根据审稿意见修改"""
         
-        chapter_text = state.chapters.get(state.current_chapter, "")
+        chapter_obj = state.chapters.get(state.current_chapter, "")
+        chapter_text = getattr(chapter_obj, "text", chapter_obj)
         latest = state.get_latest_review()
         
         if not latest:
@@ -481,17 +483,15 @@ class ReviserAgent(BaseAgent):
         
         # 5. 更新状态
         from core.state import ChapterStatus
-        state.chapters[state.current_chapter] = revised_text
+        from core.schema import ChapterContent
+
+        state.chapters[state.current_chapter] = ChapterContent(
+            text=revised_text,
+            version=state.review_round + 1,
+            word_count=len(revised_text),
+            modified_at=datetime.now().isoformat()
+        )
         state.chapter_status[state.current_chapter] = ChapterStatus.REVISING
-        
-        if hasattr(state, 'creation') and state.creation:
-            from core.schema import ChapterContent
-            state.creation['chapters'][state.current_chapter] = ChapterContent(
-                text=revised_text,
-                version=state.review_round + 1,
-                word_count=len(revised_text),
-                modified_at=datetime.now().isoformat()
-            )
         
         self._notify("chapter_revised", {
             "chapter": state.current_chapter,
@@ -549,7 +549,7 @@ class ProofreaderAgent(BaseAgent):
         """校对（结构化输出 + 终审）"""
 
         chapter_obj = state.chapters.get(state.current_chapter, "")
-        chapter_text = getattr(chapter_obj, "content", chapter_obj)
+        chapter_text = getattr(chapter_obj, "text", chapter_obj)
 
         scope = getattr(state, "proofread_scope", "chapter")
         proofread_context = getattr(state, "proofread_context", {}) or {}
@@ -613,7 +613,9 @@ class ProofreaderAgent(BaseAgent):
     
     def _update_state_with_proofread(self, state, proofread):
         from core.state import ChapterStatus, ReviewRecord
-        
+
+        state.proofread_results.setdefault(state.current_chapter, []).append(proofread)
+
         if proofread.passed:
             state.chapter_status[state.current_chapter] = ChapterStatus.APPROVED
         else:

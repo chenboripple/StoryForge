@@ -67,7 +67,7 @@ class NovelState:
     volume_outline: Dict[int, str] = field(default_factory=dict)
     characters: List[CharacterInfo] = field(default_factory=list)
 
-    # 章节与审稿
+    # 章节与审稿（单一真源：creation['chapters']）
     chapters: Dict[int, Any] = field(default_factory=dict)
     chapter_status: Dict[int, ChapterStatus] = field(default_factory=dict)
     current_chapter: int = 1
@@ -75,6 +75,7 @@ class NovelState:
     max_review_rounds: int = 3
     reviews: Dict[int, List[Any]] = field(default_factory=dict)
     structured_reviews: Dict[int, List[Any]] = field(default_factory=dict)
+    proofread_results: Dict[int, List[Any]] = field(default_factory=dict)
 
     # 校对范围控制：chapter | volume | book | project_docs
     proofread_scope: str = "chapter"
@@ -102,9 +103,11 @@ class NovelState:
             self.creation = {}
 
         self.creation.setdefault("chapter_outlines", {})
-        self.creation.setdefault("chapters", self.chapters)
 
-        # 双向对齐，保持引用一致
+        # 章节单一真源：creation['chapters']
+        if "chapters" not in self.creation:
+            self.creation["chapters"] = self.chapters if isinstance(self.chapters, dict) else {}
+
         self.chapters = self.creation["chapters"]
 
     def get_current_chapter_status(self) -> ChapterStatus:
