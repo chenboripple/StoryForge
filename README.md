@@ -54,6 +54,12 @@ python examples/debug_pipeline.py
 | `STORYFORGE_DEBUG_DIR` | `debug.output_dir` |
 | `STORYFORGE_DEFAULT_TARGET_WORD_COUNT` | `pipeline.default_target_word_count` |
 
+快速排查当前实际生效配置（含每个字段来源）：
+
+```bash
+python -m core.settings
+```
+
 ## 操作页面（MVP）
 
 启动命令：

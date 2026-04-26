@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -59,14 +59,14 @@ def _config_get(config: dict[str, Any], path: str) -> Any:
     return current
 
 
-def _required_value(env_name: str, config: dict[str, Any], config_path: str) -> Any:
+def _resolve_value(env_name: str, config: dict[str, Any], config_path: str) -> tuple[Any, str]:
     env_value = os.getenv(env_name)
     if env_value is not None and str(env_value).strip() != "":
-        return env_value
+        return env_value, f"env:{env_name}"
 
     config_value = _config_get(config, config_path)
     if config_value is not None and str(config_value).strip() != "":
-        return config_value
+        return config_value, f"file:{USER_CONFIG_FILE}#{config_path}"
 
     raise RuntimeError(
         f"缺少必填配置: {config_path} (env: {env_name}). "
@@ -79,8 +79,8 @@ def _required_int(
     config: dict[str, Any],
     config_path: str,
     minimum: int | None = None,
-) -> int:
-    raw = _required_value(env_name, config, config_path)
+) -> tuple[int, str]:
+    raw, source = _resolve_value(env_name, config, config_path)
     try:
         value = int(raw)
     except (TypeError, ValueError) as exc:
@@ -88,66 +88,94 @@ def _required_int(
 
     if minimum is not None and value < minimum:
         raise RuntimeError(f"配置必须 >= {minimum}: {config_path}，当前值: {value}")
-    return value
+    return value, source
 
 
-def _required_str(env_name: str, config: dict[str, Any], config_path: str) -> str:
-    raw = _required_value(env_name, config, config_path)
+def _required_str(env_name: str, config: dict[str, Any], config_path: str) -> tuple[str, str]:
+    raw, source = _resolve_value(env_name, config, config_path)
     value = str(raw).strip()
     if not value:
         raise RuntimeError(f"配置不能为空: {config_path}")
-    return value
+    return value, source
 
 
-def _required_path(env_name: str, config: dict[str, Any], config_path: str) -> Path:
-    raw = _required_str(env_name, config, config_path)
-    return Path(raw).expanduser().resolve()
+def _required_path(env_name: str, config: dict[str, Any], config_path: str) -> tuple[Path, str]:
+    raw, source = _required_str(env_name, config, config_path)
+    return Path(raw).expanduser().resolve(), source
+
+
+def _build_settings() -> tuple[StoryForgeSettings, dict[str, str]]:
+    user_config = _load_user_config()
+    sources: dict[str, str] = {}
+
+    console_max_running_tasks, sources["console.max_running_tasks"] = _required_int(
+        "STORYFORGE_MAX_RUNNING_TASKS",
+        user_config,
+        "console.max_running_tasks",
+        minimum=1,
+    )
+    console_default_command, sources["console.default_command"] = _required_str(
+        "STORYFORGE_DEFAULT_COMMAND",
+        user_config,
+        "console.default_command",
+    )
+    console_template_file, sources["console.template_file"] = _required_path(
+        "STORYFORGE_TEMPLATE_FILE",
+        user_config,
+        "console.template_file",
+    )
+
+    debug_output_dir, sources["debug.output_dir"] = _required_path(
+        "STORYFORGE_DEBUG_DIR",
+        user_config,
+        "debug.output_dir",
+    )
+
+    pipeline_target_word_count, sources["pipeline.default_target_word_count"] = _required_int(
+        "STORYFORGE_DEFAULT_TARGET_WORD_COUNT",
+        user_config,
+        "pipeline.default_target_word_count",
+        minimum=500,
+    )
+
+    settings = StoryForgeSettings(
+        project_root=PROJECT_ROOT,
+        config_file=USER_CONFIG_FILE,
+        console=ConsoleSettings(
+            max_running_tasks=console_max_running_tasks,
+            default_command=console_default_command,
+            template_file=console_template_file,
+        ),
+        debug=DebugSettings(output_dir=debug_output_dir),
+        pipeline=PipelineSettings(default_target_word_count=pipeline_target_word_count),
+    )
+    return settings, sources
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> StoryForgeSettings:
-    user_config = _load_user_config()
+    settings, _ = _build_settings()
+    return settings
 
-    console = ConsoleSettings(
-        max_running_tasks=_required_int(
-            "STORYFORGE_MAX_RUNNING_TASKS",
-            user_config,
-            "console.max_running_tasks",
-            minimum=1,
-        ),
-        default_command=_required_str(
-            "STORYFORGE_DEFAULT_COMMAND",
-            user_config,
-            "console.default_command",
-        ),
-        template_file=_required_path(
-            "STORYFORGE_TEMPLATE_FILE",
-            user_config,
-            "console.template_file",
-        ),
-    )
 
-    debug = DebugSettings(
-        output_dir=_required_path(
-            "STORYFORGE_DEBUG_DIR",
-            user_config,
-            "debug.output_dir",
-        ),
-    )
+def get_settings_with_sources() -> tuple[StoryForgeSettings, dict[str, str]]:
+    return _build_settings()
 
-    pipeline = PipelineSettings(
-        default_target_word_count=_required_int(
-            "STORYFORGE_DEFAULT_TARGET_WORD_COUNT",
-            user_config,
-            "pipeline.default_target_word_count",
-            minimum=500,
-        ),
-    )
 
-    return StoryForgeSettings(
-        project_root=PROJECT_ROOT,
-        config_file=USER_CONFIG_FILE,
-        console=console,
-        debug=debug,
-        pipeline=pipeline,
-    )
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def main() -> None:
+    settings, sources = get_settings_with_sources()
+    payload = {
+        "settings": asdict(settings),
+        "sources": sources,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default))
+
+
+if __name__ == "__main__":
+    main()
