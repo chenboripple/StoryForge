@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 from enum import Enum
 
+from core.settings import get_settings
+
 
 class ChapterStatus(Enum):
     """章节状态"""
@@ -50,6 +52,9 @@ class CharacterInfo:
     classic_lines: List[str] = field(default_factory=list)
 
 
+DEFAULT_SETTINGS = get_settings()
+
+
 @dataclass
 class NovelState:
     """小说全局状态"""
@@ -58,7 +63,7 @@ class NovelState:
     novel_id: str = ""
     novel_title: str = ""
     genre: str = ""
-    target_word_count: int = 3000
+    target_word_count: int = DEFAULT_SETTINGS.pipeline.default_target_word_count
     current_stage: PipelineStage = PipelineStage.CREATION
 
     # 创作层

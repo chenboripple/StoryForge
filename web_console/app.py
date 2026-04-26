@@ -20,6 +20,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+from core.settings import get_settings
+
 
 @dataclass
 class TaskRuntime:
@@ -48,11 +50,14 @@ class SaveTemplateRequest(BaseModel):
     command: str
 
 
-app = FastAPI(title="StoryForge Console", version="0.1.1")
+settings = get_settings()
+
+app = FastAPI(title="StoryForge Console", version="0.1.2")
 TASKS: Dict[str, TaskRuntime] = {}
 TASK_LOCK = threading.Lock()
-MAX_RUNNING_TASKS = int(os.getenv("STORYFORGE_MAX_RUNNING_TASKS", "2"))
-TEMPLATE_FILE = Path(__file__).resolve().parent / "templates.json"
+MAX_RUNNING_TASKS = settings.console.max_running_tasks
+DEFAULT_COMMAND = settings.console.default_command
+TEMPLATE_FILE = settings.console.template_file
 
 
 def _now() -> str:
@@ -177,7 +182,7 @@ async def index() -> str:
   </div>
   <div class="row">
     <label>启动命令</label><br />
-    <input id="command" value="python3 examples/debug_pipeline.py" />
+    <input id="command" value="{DEFAULT_COMMAND}" />
   </div>
   <div style="margin-top:8px;">
     <button onclick="startTask()">启动任务</button>
@@ -362,7 +367,7 @@ async def start_task(req: StartTaskRequest) -> dict:
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
 
-    command = req.command or "python3 examples/debug_pipeline.py"
+    command = req.command or DEFAULT_COMMAND
 
     if _running_tasks_count() >= MAX_RUNNING_TASKS:
         raise HTTPException(

@@ -18,6 +18,18 @@ pip install -r requirements.txt
 python examples/debug_pipeline.py
 ```
 
+## 配置
+
+统一配置入口：`core/settings.py`，支持环境变量覆盖。
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `STORYFORGE_MAX_RUNNING_TASKS` | `2` | 控制台运行中任务上限 |
+| `STORYFORGE_DEFAULT_COMMAND` | `python3 examples/debug_pipeline.py` | 控制台默认启动命令 |
+| `STORYFORGE_TEMPLATE_FILE` | `web_console/templates.json` | 模板存储文件 |
+| `STORYFORGE_DEBUG_DIR` | `debug_output` | 调试输出目录 |
+| `STORYFORGE_DEFAULT_TARGET_WORD_COUNT` | `3000` | NovelState 默认章节目标字数 |
+
 ## 操作页面（MVP）
 
 启动命令：
@@ -27,7 +39,7 @@ uvicorn web_console.app:app --reload --port 8787
 ```
 
 浏览器访问 `http://127.0.0.1:8787`。
-支持启动任务、查看状态、查看日志、停止任务。
+支持启动任务、查看状态、查看日志、停止任务，以及模板保存、并发上限控制、日志下载。
 
 ## 项目结构
 
@@ -40,6 +52,7 @@ StoryForge/
 │   ├── memory.py      # 记忆系统
 │   ├── outline.py     # 大纲数据结构
 │   ├── prompt_assembler.py  # 动态 Prompt 组装
+│   ├── settings.py    # 统一配置入口
 │   └── utils/         # 工具函数
 ├── agents/            # Agent 角色定义
 │   └── creation_agents.py    # 墨川/青锋/砚清
