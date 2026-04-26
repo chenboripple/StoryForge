@@ -20,7 +20,31 @@ python examples/debug_pipeline.py
 
 ## 配置
 
-统一配置入口：`core/settings.py`，支持环境变量覆盖。
+统一配置入口：`core/settings.py`。
+
+默认读取用户配置文件：`~/.storyforge/config.json`。
+
+优先级：**环境变量 > `~/.storyforge/config.json` > 代码默认值**。
+
+配置文件示例：
+
+```json
+{
+  "console": {
+    "max_running_tasks": 2,
+    "default_command": "python3 examples/debug_pipeline.py",
+    "template_file": "~/work/StoryForge/web_console/templates.json"
+  },
+  "debug": {
+    "output_dir": "~/work/StoryForge/debug_output"
+  },
+  "pipeline": {
+    "default_target_word_count": 3000
+  }
+}
+```
+
+支持的环境变量：
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
