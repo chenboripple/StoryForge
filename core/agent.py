@@ -6,11 +6,129 @@ StoryForge - Agent 基类
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Any, Union
 from abc import ABC, abstractmethod
+from datetime import datetime
 import json
 
 from core.schema import ReviewResult, ProofreadResult, ChapterContent
 from core.memory import StoryMemory
 from core.utils.errors import ErrorHandler, RetryWithBackoff
+
+
+@dataclass
+class AgentMessage:
+    """Agent 间消息"""
+    sender: str                      # 发送者名称
+    msg_type: str                    # 消息类型：issue / suggestion / info / warning
+    content: str                     # 消息内容
+    target: Optional[str] = None     # 目标 Agent（None 表示广播）
+    chapter: Optional[int] = None    # 相关章节
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    priority: str = "normal"         # low / normal / high / urgent
+
+
+class MessageBus:
+    """
+    Agent 间消息总线
+    
+    支持：
+    1. 发布/订阅模式
+    2. 按消息类型过滤
+    3. 按目标 Agent 定向投递
+    4. 消息持久化（用于断点续跑）
+    """
+    
+    def __init__(self):
+        self._messages: List[AgentMessage] = []
+        self._subscribers: Dict[str, List[Callable]] = {}
+        self._type_subscribers: Dict[str, List[Callable]] = {}
+    
+    def publish(self, message: AgentMessage):
+        """发布消息"""
+        self._messages.append(message)
+        
+        # 通知特定目标订阅者
+        if message.target and message.target in self._subscribers:
+            for callback in self._subscribers[message.target]:
+                callback(message)
+        
+        # 通知类型订阅者
+        if message.msg_type in self._type_subscribers:
+            for callback in self._type_subscribers[message.msg_type]:
+                callback(message)
+        
+        # 通知广播订阅者（target为None的订阅者）
+        if None in self._subscribers:
+            for callback in self._subscribers[None]:
+                callback(message)
+    
+    def subscribe(self, agent_name: Optional[str], callback: Callable):
+        """
+        订阅消息
+        
+        Args:
+            agent_name: 订阅哪个 Agent 的消息（None 表示订阅所有）
+            callback: 回调函数，接收 AgentMessage
+        """
+        if agent_name not in self._subscribers:
+            self._subscribers[agent_name] = []
+        self._subscribers[agent_name].append(callback)
+    
+    def subscribe_by_type(self, msg_type: str, callback: Callable):
+        """按消息类型订阅"""
+        if msg_type not in self._type_subscribers:
+            self._type_subscribers[msg_type] = []
+        self._type_subscribers[msg_type].append(callback)
+    
+    def get_messages(
+        self,
+        agent: Optional[str] = None,
+        msg_type: Optional[str] = None,
+        chapter: Optional[int] = None,
+        since: Optional[str] = None
+    ) -> List[AgentMessage]:
+        """查询历史消息"""
+        result = self._messages
+        
+        if agent:
+            result = [m for m in result if m.sender == agent or m.target == agent]
+        if msg_type:
+            result = [m for m in result if m.msg_type == msg_type]
+        if chapter:
+            result = [m for m in result if m.chapter == chapter]
+        if since:
+            result = [m for m in result if m.timestamp >= since]
+        
+        return result
+    
+    def get_unread_for_agent(self, agent_name: str) -> List[AgentMessage]:
+        """获取指定 Agent 的未读消息（target为该Agent或广播）"""
+        return [
+            m for m in self._messages
+            if m.target == agent_name or m.target is None
+        ]
+    
+    def to_dict(self) -> List[Dict]:
+        """序列化所有消息"""
+        return [
+            {
+                "sender": m.sender,
+                "msg_type": m.msg_type,
+                "content": m.content,
+                "target": m.target,
+                "chapter": m.chapter,
+                "timestamp": m.timestamp,
+                "priority": m.priority
+            }
+            for m in self._messages
+        ]
+    
+    @classmethod
+    def from_dict(cls, data: List[Dict]) -> 'MessageBus':
+        """从序列化数据恢复"""
+        bus = cls()
+        for item in data:
+            bus.publish(AgentMessage(**item))
+        return bus
 
 
 @dataclass
@@ -79,17 +197,74 @@ class BaseAgent(ABC):
         llm_client: Optional[Callable] = None,
         memory: Optional[StoryMemory] = None,
         error_handler: Optional[ErrorHandler] = None,
-        use_json_mode: bool = False  # 是否要求 LLM 输出 JSON
+        use_json_mode: bool = False,  # 是否要求 LLM 输出 JSON
+        message_bus: Optional[MessageBus] = None  # Agent 间通信总线
     ):
         self.persona = persona
         self.llm_client = llm_client
         self.memory = memory
         self.error_handler = error_handler or ErrorHandler()
         self.use_json_mode = use_json_mode
+        self.message_bus = message_bus  # 消息总线
         self.callbacks: List[Callable] = []
         self.retry_executor = RetryWithBackoff(
             max_retries=self.error_handler.max_retries + 1,
             base_delay=1.0
+        )
+        
+        # 如果提供了消息总线，自动订阅相关消息
+        if self.message_bus:
+            self._setup_message_subscriptions()
+    
+    def _setup_message_subscriptions(self):
+        """设置消息订阅（子类可覆盖）"""
+        # 默认订阅与自己相关的消息
+        self.message_bus.subscribe(self.persona.name, self._on_message)
+        # 订阅广播消息
+        self.message_bus.subscribe(None, self._on_broadcast)
+    
+    def _on_message(self, message: AgentMessage):
+        """处理定向消息（子类可覆盖）"""
+        print(f"📨 [{self.persona.name}] 收到来自 {message.sender} 的消息: {message.content[:100]}...")
+    
+    def _on_broadcast(self, message: AgentMessage):
+        """处理广播消息（子类可覆盖）"""
+        pass  # 默认忽略广播
+    
+    def publish_message(
+        self,
+        msg_type: str,
+        content: str,
+        target: Optional[str] = None,
+        chapter: Optional[int] = None,
+        priority: str = "normal"
+    ):
+        """发布消息到总线"""
+        if not self.message_bus:
+            return
+        
+        message = AgentMessage(
+            sender=self.persona.name,
+            msg_type=msg_type,
+            content=content,
+            target=target,
+            chapter=chapter or getattr(self, '_current_chapter', None),
+            priority=priority
+        )
+        self.message_bus.publish(message)
+    
+    def get_messages_from_bus(
+        self,
+        msg_type: Optional[str] = None,
+        chapter: Optional[int] = None
+    ) -> List[AgentMessage]:
+        """从总线获取与自己相关的消息"""
+        if not self.message_bus:
+            return []
+        return self.message_bus.get_messages(
+            agent=self.persona.name,
+            msg_type=msg_type,
+            chapter=chapter
         )
     
     def add_callback(self, callback: Callable):
@@ -98,6 +273,16 @@ class BaseAgent(ABC):
     def _notify(self, event: str, data: dict):
         for callback in self.callbacks:
             callback(event, data)
+    
+    def _notify_bus(self, event_type: str, data: dict):
+        """向消息总线发布事件（供其他 Agent 订阅）"""
+        if self.message_bus:
+            self.message_bus.publish(AgentMessage(
+                sender=self.persona.name,
+                msg_type=event_type,
+                content=str(data),
+                chapter=data.get('chapter')
+            ))
     
     @abstractmethod
     def invoke(self, state: Any) -> Any:

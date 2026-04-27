@@ -89,12 +89,14 @@ class NovelState:
 
     # 萃取层
     knowledge_base: Dict[str, Any] = field(default_factory=dict)
-
+    chapter_analyses: Dict[int, Any] = field(default_factory=dict)  # 知识萃取结果
+    
     # IP 生成层
     character_ips: Dict[str, Dict] = field(default_factory=dict)
     visual_assets: Dict[str, List[Dict]] = field(default_factory=dict)
+    story_bible: Optional[Any] = None  # Story Bible 对象
 
-    # 兼容容器（用于新旧代码混用）
+    # 兼容容器（仅用于存储非章节类辅助数据，不再与 chapters 双向绑定）
     creation: Dict[str, Any] = field(default_factory=dict)
 
     # 控制字段
@@ -103,17 +105,20 @@ class NovelState:
     should_pause: bool = False
 
     def __post_init__(self):
-        # 兼容 creation 字段访问
-        if not isinstance(self.creation, dict):
-            self.creation = {}
-
-        self.creation.setdefault("chapter_outlines", {})
-
-        # 章节单一真源：creation['chapters']
-        if "chapters" not in self.creation:
-            self.creation["chapters"] = self.chapters if isinstance(self.chapters, dict) else {}
-
-        self.chapters = self.creation["chapters"]
+        # 兼容旧数据：如果 creation 中有 chapters 且 self.chapters 为空，迁移一次
+        if isinstance(self.creation, dict):
+            if "chapters" in self.creation and not self.chapters:
+                self.chapters = self.creation["chapters"]
+            # 确保 creation 中有 chapters 引用（供旧代码访问）
+            self.creation["chapters"] = self.chapters
+        else:
+            self.creation = {"chapters": self.chapters}
+        
+        # 初始化 creation 中的辅助字段
+        if isinstance(self.creation, dict):
+            self.creation.setdefault("chapter_outlines", {})
+            self.creation.setdefault("chapter_summaries", {})
+            self.creation.setdefault("extraction_notes", {})
 
     def get_current_chapter_status(self) -> ChapterStatus:
         """获取当前章节状态"""

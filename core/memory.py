@@ -126,24 +126,170 @@ class StoryMemory:
         """
         issues = []
         
-        # 检查角色名字拼写
-        for name in self.character_arcs.keys():
-            # 简单检查：名字是否出现但拼写错误（可扩展为模糊匹配）
+        # 1. 角色一致性检查
+        for name, arc in self.character_arcs.items():
             if name not in chapter_content:
-                # 角色未出场，不算错误
-                pass
+                continue  # 角色未出场，跳过
+            
+            # 检查角色行为是否符合当前状态
+            # 例如：如果角色状态是"重伤"，但章节中描述他"生龙活虎地战斗"
+            if arc.current_state:
+                # 定义不一致模式：状态 -> 矛盾描述关键词
+                inconsistency_patterns = {
+                    "重伤": ["生龙活虎", "精力充沛", "全力奔跑", "激烈战斗"],
+                    "死亡": ["说话", "行动", "思考", "出现"],
+                    "昏迷": ["说话", "行动", "思考", "决策"],
+                    "被俘": ["自由行动", "独自离开", "无人看管"],
+                    "敌对": ["亲密交谈", "合作", "信任", "帮助"],
+                    "陌生": ["深情对视", "默契配合", "已知秘密"],
+                }
+                
+                for state_keyword, forbidden_patterns in inconsistency_patterns.items():
+                    if state_keyword in arc.current_state:
+                        for pattern in forbidden_patterns:
+                            if pattern in chapter_content:
+                                # 确认是描述该角色的（简单上下文检查）
+                                # 找到 pattern 出现的位置，检查前后100字符是否包含角色名
+                                idx = chapter_content.find(pattern)
+                                context = chapter_content[max(0, idx-100):min(len(chapter_content), idx+100)]
+                                if name in context:
+                                    issues.append(Inconsistency(
+                                        type="character",
+                                        description=f"{name}当前状态是'{arc.current_state}'，但出现了矛盾描述：'{pattern}'",
+                                        chapter=chapter_num,
+                                        severity="error"
+                                    ))
+            
+            # 检查已完成的目标是否被重复提及为未完成
+            for completed_goal in arc.completed_goals:
+                # 如果角色还在追求已完成的目标，属于轻微不一致
+                pursuit_patterns = ["想要", "决心", "立志", "目标是", "为了"]
+                for pursuit in pursuit_patterns:
+                    if pursuit in chapter_content and completed_goal in chapter_content:
+                        idx = chapter_content.find(pursuit)
+                        context = chapter_content[max(0, idx-50):min(len(chapter_content), idx+len(completed_goal)+50)]
+                        if name in context and completed_goal in context:
+                            issues.append(Inconsistency(
+                                type="character",
+                                description=f"{name}的目标'{completed_goal}'已在之前章节完成，但本章仍描述其在追求该目标",
+                                chapter=chapter_num,
+                                severity="warning"
+                            ))
         
-        # 检查地点状态一致性
+        # 2. 世界设定一致性检查
         for loc_name, loc_info in self.world_state.locations.items():
-            if loc_name in chapter_content:
-                # 检查是否描述了与当前状态矛盾的属性
-                # 例如：如果地点状态是"损毁"，但章节描述为"完好"
-                pass  # 需要更智能的 NLP 检查
+            if loc_name not in chapter_content:
+                continue
+            
+            # 检查地点状态矛盾
+            status = loc_info.get("status", "")
+            if status:
+                location_inconsistency_patterns = {
+                    "损毁": ["完好无损", "正常运转", "繁华", "热闹"],
+                    "废墟": ["新建", "装修", "营业中", "人来人往"],
+                    "被占领": ["自由出入", "无人看守", "安全区"],
+                    "危险": ["安全", "避难所", "放心", "无威胁"],
+                }
+                
+                for status_keyword, forbidden_patterns in location_inconsistency_patterns.items():
+                    if status_keyword in status:
+                        for pattern in forbidden_patterns:
+                            if pattern in chapter_content:
+                                idx = chapter_content.find(pattern)
+                                context = chapter_content[max(0, idx-80):min(len(chapter_content), idx+80)]
+                                if loc_name in context:
+                                    issues.append(Inconsistency(
+                                        type="world",
+                                        description=f"地点'{loc_name}'状态是'{status}'，但出现了矛盾描述：'{pattern}'",
+                                        chapter=chapter_num,
+                                        severity="error"
+                                    ))
+            
+            # 检查地点控制势力矛盾
+            controlled_by = loc_info.get("controlled_by", "")
+            if controlled_by:
+                # 如果地点被A势力控制，但描述中B势力在该地点自由行动
+                for faction_name, faction_info in self.world_state.factions.items():
+                    if faction_name != controlled_by and faction_name in chapter_content:
+                        # 检查敌对势力是否出现在该地点
+                        enemies = loc_info.get("enemies", [])
+                        if faction_name in enemies:
+                            idx = chapter_content.find(loc_name)
+                            context = chapter_content[max(0, idx-100):min(len(chapter_content), idx+100)]
+                            if faction_name in context:
+                                issues.append(Inconsistency(
+                                    type="world",
+                                    description=f"地点'{loc_name}'被'{controlled_by}'控制，但敌对势力'{faction_name}'出现在该地点",
+                                    chapter=chapter_num,
+                                    severity="warning"
+                                ))
         
-        # 检查时间线
+        # 3. 时间线一致性检查
         if chapter_num > 1:
             prev_events = self._chapter_events.get(chapter_num - 1, [])
-            # 确保当前章节的事件在逻辑上接得上前一章
+            current_events = self._chapter_events.get(chapter_num, [])
+            
+            for prev_event in prev_events:
+                # 检查时间关键词矛盾
+                time_indicators = {
+                    "第二天": ["同一天", "当晚", "几小时后", "紧接着"],
+                    "一周后": ["第二天", "隔天", "次日"],
+                    "一个月后": ["一周后", "几天后", "第二天"],
+                    "一年后": ["一个月后", "几周后", "几天后"],
+                }
+                
+                for time_marker, contradictions in time_indicators.items():
+                    if time_marker in prev_event.description:
+                        for contradiction in contradictions:
+                            if contradiction in chapter_content:
+                                issues.append(Inconsistency(
+                                    type="timeline",
+                                    description=f"前一章标记时间为'{time_marker}'，但本章出现'{contradiction}'，时间线可能矛盾",
+                                    chapter=chapter_num,
+                                    severity="warning"
+                                ))
+        
+        # 4. 伏笔回收检查（契诃夫之枪）
+        unresolved = [g for g in self.chekhovs_guns if not g.get("resolved")]
+        for gun in unresolved:
+            gun_desc = gun.get("description", "")
+            # 检查伏笔是否在本章被回收
+            if gun_desc and any(keyword in chapter_content for keyword in gun_desc.split()[:3]):
+                # 简单检查：如果伏笔描述中的前3个关键词出现在本章，认为可能已回收
+                # 更精确的检查需要更复杂的NLP
+                pass  # 这里只标记，不报错（回收伏笔是好事）
+        
+        # 5. 关系一致性检查
+        for name, arc in self.character_arcs.items():
+            if name not in chapter_content:
+                continue
+            
+            for related_name, relation in arc.relationships.items():
+                if related_name not in chapter_content:
+                    continue
+                
+                # 检查关系矛盾
+                relation_inconsistencies = {
+                    "敌对": ["拥抱", "亲吻", "合作", "信任", "亲密"],
+                    "陌生": ["默契", "心有灵犀", "老相识", "多年好友"],
+                    "恋人": ["厌恶", "憎恨", "敌对", "互相提防"],
+                    "父子": ["同辈相称", "直呼其名", "陌生称呼"],
+                }
+                
+                for relation_type, forbidden_patterns in relation_inconsistencies.items():
+                    if relation_type in relation:
+                        for pattern in forbidden_patterns:
+                            if pattern in chapter_content:
+                                # 检查上下文是否涉及这两个角色
+                                idx = chapter_content.find(pattern)
+                                context = chapter_content[max(0, idx-120):min(len(chapter_content), idx+120)]
+                                if name in context and related_name in context:
+                                    issues.append(Inconsistency(
+                                        type="plot",
+                                        description=f"{name}与{related_name}的关系是'{relation}'，但出现了矛盾互动：'{pattern}'",
+                                        chapter=chapter_num,
+                                        severity="error"
+                                    ))
         
         return issues
     

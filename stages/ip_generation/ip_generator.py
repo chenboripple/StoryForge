@@ -1,0 +1,708 @@
+"""
+StoryForge - IP 生成器
+
+职责：
+1. 为每个角色生成完整的 IP 档案（外貌、性格、经典语录、成长弧线）
+2. 生成关系图谱（人物关系矩阵、关系演变）
+3. 生成场景设定集（关键场景详细描述、视觉参考）
+4. 生成衍生设定（道具、法术、势力、世界观补充）
+5. 生成故事 bible 文档
+"""
+
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Any, Callable
+import json
+import os
+from datetime import datetime
+
+
+@dataclass
+class CharacterIP:
+    """人物 IP 档案"""
+    character_id: str  # 拼音+下划线，如"zhang_san"
+    name: str
+    role: str  # "protagonist" | "supporting" | "antagonist"
+    appearance: Dict[str, str] = field(default_factory=dict)
+    # appearance 结构：
+    # {
+    #   "basic": "基本描述",
+    #   "face": "面部细节",
+    #   "clothing": "服饰特点",
+    #   "posture": "姿态特征",
+    #   "visual_tags": ["关键词1", "关键词2"]
+    # }
+    personality: Dict[str, Any] = field(default_factory=dict)
+    # personality 结构：
+    # {
+    #   "core": "核心性格",
+    #   "traits": ["特质1", "特质2"],
+    #   "strengths": ["优点1"],
+    #   "weaknesses": ["缺点1"],
+    #   "fears": ["恐惧1"],
+    #   "motivations": ["动机1"]
+    # }
+    background: str = ""
+    relationships: List[Dict] = field(default_factory=list)
+    # relationships: [{"name": "关系对象", "relation": "关系类型", "description": "详细说明"}]
+    character_arc: Dict[str, str] = field(default_factory=dict)
+    # character_arc: {"start": "初始状态", "turning_points": [], "end": "最终状态"}
+    famous_quotes: List[str] = field(default_factory=list)
+    key_scenes: List[Dict] = field(default_factory=list)
+    # key_scenes: [{"chapter": 1, "description": "关键场景描述"}]
+    tags: List[str] = field(default_factory=list)
+    first_appearance: int = 0
+    last_appearance: int = 0
+    total_scenes: int = 0
+
+
+@dataclass
+class RelationshipEdge:
+    """关系边（用于图谱）"""
+    source: str  # 源角色 ID
+    target: str  # 目标角色 ID
+    relation_type: str  # "friend" | "enemy" | "family" | "romantic" | "mentor" | "rival"
+    description: str
+    intensity: int = 5  # 关系强度 1-10
+    evolution: List[Dict] = field(default_factory=list)
+    # evolution: [{"chapter": 1, "change": "关系变化描述"}]
+
+
+@dataclass
+class SceneSetting:
+    """场景设定"""
+    scene_id: str
+    name: str
+    location: str
+    chapter: int
+    description: str
+    atmosphere: str  # 氛围描述
+    visual_references: List[str] = field(default_factory=list)  # 视觉参考关键词
+    significance: str = ""  # 场景重要性说明
+    props_in_scene: List[str] = field(default_factory=list)  # 场景中的关键道具
+    characters_present: List[str] = field(default_factory=list)  # 在场角色
+
+
+@dataclass
+class DerivedSetting:
+    """衍生设定"""
+    setting_type: str  # "item" | "spell" | "faction" | "creature" | "rule"
+    name: str
+    description: str
+    origin: str = ""  # 来源说明
+    properties: Dict = field(default_factory=dict)
+    related_characters: List[str] = field(default_factory=list)
+    first_appearance: int = 0
+    tags: List[str] = field(default_factory=list)
+
+
+@dataclass
+class StoryBible:
+    """故事 Bible"""
+    title: str
+    version: str = "1.0"
+    created_at: str = ""
+    updated_at: str = ""
+    logline: str = ""  # 一句话梗概
+    core_concept: str = ""  # 核心概念
+    themes: List[str] = field(default_factory=list)
+    tone: str = ""
+    target_audience: str = ""
+    world_overview: str = ""
+    characters: List[CharacterIP] = field(default_factory=list)
+    relationships: List[RelationshipEdge] = field(default_factory=list)
+    key_scenes: List[SceneSetting] = field(default_factory=list)
+    derived_settings: List[DerivedSetting] = field(default_factory=list)
+    chapter_summaries: Dict[int, str] = field(default_factory=dict)
+
+
+class IPGenerator:
+    """
+    IP 生成器
+
+    工作流程：
+    1. 聚合所有已完成章节
+    2. 为每个角色生成完整 IP 档案
+    3. 构建关系图谱
+    4. 生成关键场景设定
+    5. 收集衍生设定
+    6. 输出 Story Bible
+    """
+
+    def __init__(
+        self,
+        llm_client: Callable = None,
+        output_dir: str = "./ip_assets"
+    ):
+        self.llm_client = llm_client
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+    def generate(
+        self,
+        title: str,
+        chapters: Dict[int, str],
+        chapter_analyses: Optional[Dict[int, Any]] = None,
+        existing_characters: Optional[List[Dict]] = None
+    ) -> StoryBible:
+        """
+        生成完整 IP 资产
+
+        Args:
+            title: 小说标题
+            chapters: 章节内容 {章节号: 内容}
+            chapter_analyses: 知识萃取结果（可选）
+            existing_characters: 已有人物设定（可选）
+        """
+        print(f"🎨 开始生成 IP 资产...")
+
+        # 1. 创建 Story Bible
+        bible = StoryBible(
+            title=title,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat()
+        )
+
+        # 2. 生成故事核心信息
+        if self.llm_client:
+            self._generate_story_core(bible, chapters)
+
+        # 3. 生成人物 IP
+        print("  👤 生成人物 IP...")
+        if self.llm_client:
+            bible.characters = self._generate_character_ips(
+                chapters, chapter_analyses, existing_characters
+            )
+
+        # 4. 生成关系图谱
+        print("  🔗 生成关系图谱...")
+        if self.llm_client:
+            bible.relationships = self._generate_relationship_graph(
+                bible.characters, chapters
+            )
+
+        # 5. 生成关键场景设定
+        print("  🎬 生成关键场景设定...")
+        if self.llm_client:
+            bible.key_scenes = self._generate_scene_settings(chapters)
+
+        # 6. 生成衍生设定
+        print("  ✨ 生成衍生设定...")
+        if self.llm_client:
+            bible.derived_settings = self._generate_derived_settings(
+                chapters, chapter_analyses
+            )
+
+        # 7. 生成章节摘要
+        print("  📝 生成章节摘要...")
+        bible.chapter_summaries = self._generate_chapter_summaries(chapters)
+
+        # 8. 保存
+        self._save_bible(bible)
+
+        print(f"  ✅ IP 生成完成！共 {len(bible.characters)} 个人物，"
+              f"{len(bible.key_scenes)} 个场景，"
+              f"{len(bible.derived_settings)} 个衍生设定")
+
+        return bible
+
+    def _generate_story_core(self, bible: StoryBible, chapters: Dict[int, str]):
+        """生成故事核心信息（logline、主题等）"""
+        if not self.llm_client:
+            return
+
+        # 聚合内容
+        sample_content = self._sample_chapters(chapters, max_chars=5000)
+
+        prompt = f"""你是一位 IP 策划专家。请根据以下小说内容，生成核心设定。
+
+【小说内容样例】
+{sample_content}
+
+【任务】
+请生成以下内容，以JSON格式返回：
+
+{{
+    "logline": "一句话梗概（30-50字）",
+    "core_concept": "核心概念说明（100-200字）",
+    "themes": ["主题1", "主题2", "主题3"],
+    "tone": "整体基调（如"严肃"、"轻松"、"悬疑"等）",
+    "world_overview": "世界观概述（200-300字）"
+}}
+
+只输出JSON，不包含其他说明：
+"""
+
+        try:
+            result = self.llm_client(prompt, temperature=0.4)
+            data = self._parse_json(result)
+
+            bible.logline = data.get('logline', '')
+            bible.core_concept = data.get('core_concept', '')
+            bible.themes = data.get('themes', [])
+            bible.tone = data.get('tone', '')
+            bible.world_overview = data.get('world_overview', '')
+
+        except Exception as e:
+            print(f"    ⚠️ 生成故事核心失败: {e}")
+
+    def _generate_character_ips(
+        self,
+        chapters: Dict[int, str],
+        chapter_analyses: Optional[Dict[int, Any]],
+        existing_characters: Optional[List[Dict]]
+    ) -> List[CharacterIP]:
+        """生成人物 IP 档案"""
+        if not self.llm_client:
+            return []
+
+        # 1. 先提取所有角色名
+        character_names = self._extract_all_character_names(chapters, chapter_analyses)
+
+        if existing_characters:
+            for char in existing_characters:
+                name = char.get('name', '')
+                if name and name not in character_names:
+                    character_names.append(name)
+
+        if not character_names:
+            print("    ⚠️ 未发现任何人物")
+            return []
+
+        print(f"    发现 {len(character_names)} 个人物")
+
+        # 2. 逐个生成 IP
+        character_ips = []
+        sample_content = self._sample_chapters(chapters, max_chars=8000)
+
+        for i, name in enumerate(character_names[:10]):  # 限制最多10个主要角色
+            print(f"    生成 {name} 的 IP ({i+1}/{min(len(character_names), 10)})...")
+            char_ip = self._generate_single_character_ip(name, sample_content)
+            if char_ip:
+                character_ips.append(char_ip)
+
+        return character_ips
+
+    def _generate_single_character_ip(
+        self,
+        character_name: str,
+        sample_content: str
+    ) -> Optional[CharacterIP]:
+        """为单个角色生成 IP"""
+        prompt = f"""你是一位人物 IP 策划专家。请根据以下小说内容，为 "{character_name}" 生成完整的人物档案。
+
+【小说内容样例】
+{sample_content}
+
+【任务】
+请为 "{character_name}" 生成详细的人物档案，以JSON格式返回：
+
+{{
+    "character_id": "拼音标识（如zhang_san）",
+    "name": "{character_name}",
+    "role": "角色定位（protagonist|supporting|antagonist|cameo）",
+    "appearance": {{
+        "basic": "基本外貌描述",
+        "face": "面部特征",
+        "clothing": "服饰特点",
+        "posture": "姿态/气质",
+        "visual_tags": ["视觉关键词1", "视觉关键词2", "视觉关键词3"]
+    }},
+    "personality": {{
+        "core": "核心性格",
+        "traits": ["性格特质1", "特质2", "特质3"],
+        "strengths": ["优点1", "优点2"],
+        "weaknesses": ["缺点1", "缺点2"],
+        "fears": ["恐惧1"],
+        "motivations": ["动机1"]
+    }},
+    "background": "背景故事",
+    "character_arc": {{
+        "start": "初始状态",
+        "end": "最终状态",
+        "key_moments": ["关键时刻1", "关键时刻2"]
+    }},
+    "famous_quotes": ["经典语录1（如果有）", "经典语录2"],
+    "tags": ["标签1", "标签2", "标签3"],
+    "first_appearance": 1,
+    "last_appearance": 1
+}}
+
+只输出JSON，不包含其他说明：
+"""
+
+        try:
+            result = self.llm_client(prompt, temperature=0.4)
+            data = self._parse_json(result)
+
+            # 构建 CharacterIP
+            return CharacterIP(
+                character_id=data.get('character_id', character_name),
+                name=data.get('name', character_name),
+                role=data.get('role', 'supporting'),
+                appearance=data.get('appearance', {}),
+                personality=data.get('personality', {}),
+                background=data.get('background', ''),
+                character_arc=data.get('character_arc', {}),
+                famous_quotes=data.get('famous_quotes', []),
+                tags=data.get('tags', []),
+                first_appearance=data.get('first_appearance', 1),
+                last_appearance=data.get('last_appearance', 1)
+            )
+
+        except Exception as e:
+            print(f"      ⚠️ 生成 {character_name} IP 失败: {e}")
+            return None
+
+    def _generate_relationship_graph(
+        self,
+        characters: List[CharacterIP],
+        chapters: Dict[int, str]
+    ) -> List[RelationshipEdge]:
+        """生成关系图谱"""
+        if not self.llm_client or len(characters) < 2:
+            return []
+
+        sample_content = self._sample_chapters(chapters, max_chars=6000)
+        char_list_str = "\n".join([f"- {c.name} ({c.role})" for c in characters])
+
+        prompt = f"""你是一位人物关系分析专家。请根据以下内容，分析人物关系。
+
+【人物列表】
+{char_list_str}
+
+【小说内容样例】
+{sample_content}
+
+【任务】
+请分析上述人物之间的关系，以JSON格式返回：
+
+{{
+    "relationships": [
+        {{
+            "source": "人物A的name",
+            "target": "人物B的name",
+            "relation_type": "关系类型（friend|enemy|family|romantic|mentor|rival）",
+            "description": "关系详细描述",
+            "intensity": 关系强度1-10
+        }}
+    ]
+}}
+
+只输出JSON，不包含其他说明：
+"""
+
+        try:
+            result = self.llm_client(prompt, temperature=0.3)
+            data = self._parse_json(result)
+
+            edges = []
+            for rel_data in data.get('relationships', []):
+                edges.append(RelationshipEdge(
+                    source=rel_data.get('source', ''),
+                    target=rel_data.get('target', ''),
+                    relation_type=rel_data.get('relation_type', 'friend'),
+                    description=rel_data.get('description', ''),
+                    intensity=rel_data.get('intensity', 5)
+                ))
+
+            return edges
+
+        except Exception as e:
+            print(f"    ⚠️ 生成关系图谱失败: {e}")
+            return []
+
+    def _generate_scene_settings(
+        self,
+        chapters: Dict[int, str]
+    ) -> List[SceneSetting]:
+        """生成关键场景设定"""
+        if not self.llm_client:
+            return []
+
+        sample_content = self._sample_chapters(chapters, max_chars=8000)
+
+        prompt = f"""你是一位场景设计专家。请从以下小说内容中提取关键场景。
+
+【小说内容样例】
+{sample_content}
+
+【任务】
+请提取3-5个最关键的场景，以JSON格式返回：
+
+{{
+    "scenes": [
+        {{
+            "scene_id": "场景标识",
+            "name": "场景名称",
+            "location": "地点",
+            "chapter": 章节号,
+            "description": "场景详细描述",
+            "atmosphere": "氛围描述",
+            "visual_references": ["视觉参考1", "视觉参考2"],
+            "significance": "场景重要性说明",
+            "props_in_scene": ["关键道具1", "关键道具2"],
+            "characters_present": ["在场角色1", "在场角色2"]
+        }}
+    ]
+}}
+
+只输出JSON，不包含其他说明：
+"""
+
+        try:
+            result = self.llm_client(prompt, temperature=0.4)
+            data = self._parse_json(result)
+
+            scenes = []
+            for scene_data in data.get('scenes', []):
+                scenes.append(SceneSetting(
+                    scene_id=scene_data.get('scene_id', ''),
+                    name=scene_data.get('name', ''),
+                    location=scene_data.get('location', ''),
+                    chapter=scene_data.get('chapter', 1),
+                    description=scene_data.get('description', ''),
+                    atmosphere=scene_data.get('atmosphere', ''),
+                    visual_references=scene_data.get('visual_references', []),
+                    significance=scene_data.get('significance', ''),
+                    props_in_scene=scene_data.get('props_in_scene', []),
+                    characters_present=scene_data.get('characters_present', [])
+                ))
+
+            return scenes
+
+        except Exception as e:
+            print(f"    ⚠️ 生成场景设定失败: {e}")
+            return []
+
+    def _generate_derived_settings(
+        self,
+        chapters: Dict[int, str],
+        chapter_analyses: Optional[Dict[int, Any]]
+    ) -> List[DerivedSetting]:
+        """生成衍生设定（道具、法术、势力等）"""
+        if not self.llm_client:
+            return []
+
+        sample_content = self._sample_chapters(chapters, max_chars=6000)
+
+        prompt = f"""你是一位世界观设定专家。请从以下小说内容中提取衍生设定。
+
+【小说内容样例】
+{sample_content}
+
+【任务】
+请提取重要的衍生设定（道具、法术、势力、生物、规则等），以JSON格式返回：
+
+{{
+    "settings": [
+        {{
+            "setting_type": "类型（item|spell|faction|creature|rule）",
+            "name": "名称",
+            "description": "详细描述",
+            "origin": "来源/起源",
+            "properties": {{"key": "value"}},
+            "related_characters": ["相关角色1"],
+            "first_appearance": 1,
+            "tags": ["标签1"]
+        }}
+    ]
+}}
+
+只输出JSON，不包含其他说明：
+"""
+
+        try:
+            result = self.llm_client(prompt, temperature=0.4)
+            data = self._parse_json(result)
+
+            settings = []
+            for setting_data in data.get('settings', []):
+                settings.append(DerivedSetting(
+                    setting_type=setting_data.get('setting_type', 'item'),
+                    name=setting_data.get('name', ''),
+                    description=setting_data.get('description', ''),
+                    origin=setting_data.get('origin', ''),
+                    properties=setting_data.get('properties', {}),
+                    related_characters=setting_data.get('related_characters', []),
+                    first_appearance=setting_data.get('first_appearance', 1),
+                    tags=setting_data.get('tags', [])
+                ))
+
+            return settings
+
+        except Exception as e:
+            print(f"    ⚠️ 生成衍生设定失败: {e}")
+            return []
+
+    def _generate_chapter_summaries(self, chapters: Dict[int, str]) -> Dict[int, str]:
+        """生成章节摘要（简单版，不调用 LLM 避免耗时）"""
+        summaries = {}
+
+        for chapter_num, content in chapters.items():
+            # 简单截取前 100 字符作为摘要
+            # 生产环境可以用 LLM 生成更优美的摘要
+            summaries[chapter_num] = content[:100].strip() + "..."
+
+        return summaries
+
+    def _sample_chapters(self, chapters: Dict[int, str], max_chars: int = 5000) -> str:
+        """从多个章节中采样内容"""
+        sampled_parts = []
+        total_length = 0
+
+        # 按顺序采样
+        for chapter_num in sorted(chapters.keys()):
+            content = chapters[chapter_num]
+            part = f"\n=== 第{chapter_num}章 ===\n{content}"
+
+            if total_length + len(part) <= max_chars:
+                sampled_parts.append(part)
+                total_length += len(part)
+            else:
+                # 取部分内容填满
+                remaining = max_chars - total_length
+                if remaining > 100:
+                    sampled_parts.append(f"\n=== 第{chapter_num}章 ===\n{content[:remaining]}")
+                break
+
+        return "".join(sampled_parts)
+
+    def _extract_all_character_names(
+        self,
+        chapters: Dict[int, str],
+        chapter_analyses: Optional[Dict[int, Any]]
+    ) -> List[str]:
+        """提取所有出现的角色名"""
+        names = set()
+
+        # 从分析结果中提取
+        if chapter_analyses:
+            for analysis in chapter_analyses.values():
+                if hasattr(analysis, 'new_characters'):
+                    for char in analysis.new_characters:
+                        names.add(char.name)
+                if hasattr(analysis, 'events'):
+                    for event in analysis.events:
+                        names.update(event.characters_involved)
+
+        # 如果没有分析结果或结果太少，用简单启发式
+        if len(names) < 3 and self.llm_client:
+            sample = self._sample_chapters(chapters, max_chars=3000)
+            names.update(self._extract_names_with_llm(sample))
+
+        return sorted(list(names))
+
+    def _extract_names_with_llm(self, sample_content: str) -> List[str]:
+        """用 LLM 提取角色名"""
+        prompt = f"""请从以下文本中提取所有人物姓名，只返回JSON列表：
+
+{sample_content}
+
+输出格式：{{"names": ["姓名1", "姓名2"]}}
+"""
+
+        try:
+            result = self.llm_client(prompt, temperature=0.1)
+            data = self._parse_json(result)
+            return data.get('names', [])
+        except:
+            return []
+
+    def _parse_json(self, text: str) -> Dict:
+        """解析 JSON（带错误修复）"""
+        import re
+        text = text.strip()
+
+        # 找到 JSON 部分
+        start = text.find('{')
+        end = text.rfind('}')
+        if start >= 0 and end > start:
+            text = text[start:end+1]
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # 简单修复
+            text = text.replace("'", '"')
+            text = re.sub(r',\s*([}\]])', r'\1', text)
+            try:
+                return json.loads(text)
+            except:
+                return {}
+
+    def _save_bible(self, bible: StoryBible):
+        """保存 Story Bible 到文件"""
+        bible_path = os.path.join(self.output_dir, f"{bible.title}_story_bible.json")
+
+        # 转换为可序列化的 dict
+        bible_dict = {
+            "title": bible.title,
+            "version": bible.version,
+            "created_at": bible.created_at,
+            "updated_at": bible.updated_at,
+            "logline": bible.logline,
+            "core_concept": bible.core_concept,
+            "themes": bible.themes,
+            "tone": bible.tone,
+            "world_overview": bible.world_overview,
+            "characters": [
+                {
+                    "character_id": c.character_id,
+                    "name": c.name,
+                    "role": c.role,
+                    "appearance": c.appearance,
+                    "personality": c.personality,
+                    "background": c.background,
+                    "character_arc": c.character_arc,
+                    "famous_quotes": c.famous_quotes,
+                    "tags": c.tags,
+                    "first_appearance": c.first_appearance,
+                    "last_appearance": c.last_appearance
+                }
+                for c in bible.characters
+            ],
+            "relationships": [
+                {
+                    "source": r.source,
+                    "target": r.target,
+                    "relation_type": r.relation_type,
+                    "description": r.description,
+                    "intensity": r.intensity
+                }
+                for r in bible.relationships
+            ],
+            "key_scenes": [
+                {
+                    "scene_id": s.scene_id,
+                    "name": s.name,
+                    "location": s.location,
+                    "chapter": s.chapter,
+                    "description": s.description,
+                    "atmosphere": s.atmosphere,
+                    "visual_references": s.visual_references,
+                    "significance": s.significance
+                }
+                for s in bible.key_scenes
+            ],
+            "derived_settings": [
+                {
+                    "setting_type": s.setting_type,
+                    "name": s.name,
+                    "description": s.description,
+                    "origin": s.origin,
+                    "properties": s.properties,
+                    "tags": s.tags
+                }
+                for s in bible.derived_settings
+            ],
+            "chapter_summaries": bible.chapter_summaries
+        }
+
+        try:
+            with open(bible_path, 'w', encoding='utf-8') as f:
+                json.dump(bible_dict, f, ensure_ascii=False, indent=2)
+
+            print(f"  💾 Story Bible 已保存: {bible_path}")
+
+        except Exception as e:
+            print(f"  ⚠️ 保存 Story Bible 失败: {e}")
