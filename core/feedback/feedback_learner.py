@@ -223,7 +223,7 @@ class FeedbackLearner:
         optimized_prompt = base_prompt
         
         if applicable_rules:
-            optimized_prompt += "\n\n===== 写作指导 (基于用户反馈) =====\n"
+            optimized_prompt += "\n\n===== 写作指导（基于用户反馈）=====\n"
             
             for rule in applicable_rules:
                 optimized_prompt += f"\n{rule.prompt_addition}"

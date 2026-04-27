@@ -5,6 +5,7 @@ StoryForge - 模型路由层
 1. 根据任务类型自动选择最合适的模型
 2. 支持模型故障自动切换
 3. 统一管理多个 LLM Provider
+4. 支持流式输出和 Token 控制
 """
 
 from .model_router import ModelRouter, TaskType, ModelProvider
