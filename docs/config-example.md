@@ -57,10 +57,13 @@ llm:
 
 # ==================== 存储配置 ====================
 storage:
-  # 小说数据目录
-  #   - 相对路径：基于项目根目录解析
-  #   - 绝对路径：直接使用
-  data_dir: ./data
+  # 小说数据目录（完全由配置决定，不依赖项目目录）
+  #   - 绝对路径：直接使用，例如 /var/lib/storyforge/data
+  #   - ~/ 开头：相对用户主目录展开，例如 ~/.storyforge/data
+  #   - 相对路径：相对于配置文件所在目录解析
+  #     例如配置文件在 ~/.storyforge/storyforge.yaml，
+  #     data_dir: data → ~/.storyforge/data
+  data_dir: ~/.storyforge/data
 
 # ==================== 服务器配置 ====================
 server:

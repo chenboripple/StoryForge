@@ -36,12 +36,12 @@ class LLMConfig:
     base_url: str = ""               # 自定义 endpoint（例如代理或私有部署）
     temperature: float = 0.7
     timeout: int = 60
-    extra: Dict[str, Any] = field(default_factory=dict)  # 透传给底层 SDK 的额外参数
+    extra: Dict[str, Any] = field(default_factory=dict)  # 透传 SDK 额外参数
 
 
 @dataclass
 class StorageConfig:
-    data_dir: str = "./data"         # 相对路径基于项目根目录
+    data_dir: str = "~/.storyforge/data"  # 相对路径相对于配置文件目录解析
 
 
 @dataclass
@@ -67,11 +67,30 @@ class StoryForgeConfig:
 
     @property
     def data_dir_abs(self) -> str:
-        """返回绝对路径的 data_dir。相对路径基于项目根目录。"""
+        """返回绝对路径的 data_dir。
+
+        路径解析规则：
+        - 绝对路径：直接使用
+        - ~/ 开头：相对于用户主目录展开
+        - 相对路径：相对于配置文件所在目录解析；若无配置文件则相对于当前工作目录
+        """
         path = self.storage.data_dir
+
+        # 处理 ~/ 开头的路径
+        if path.startswith("~"):
+            return os.path.normpath(os.path.expanduser(path))
+
+        # 绝对路径直接返回
         if os.path.isabs(path):
-            return path
-        return os.path.normpath(os.path.join(_PROJECT_ROOT, path))
+            return os.path.normpath(path)
+
+        # 相对路径：相对于配置文件目录或当前工作目录
+        if self.config_path:
+            base_dir = os.path.dirname(os.path.abspath(self.config_path))
+        else:
+            base_dir = os.getcwd()
+
+        return os.path.normpath(os.path.join(base_dir, path))
 
 
 # ==================== 加载逻辑 ====================

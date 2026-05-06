@@ -42,10 +42,6 @@ StoryForge/
 │   └── README.md
 ├── examples/                  # 示例
 │   └── demo_pipeline.py       # 完整演示（含 Mock LLM + 保存到 Storage）
-├── data/                      # JSON 数据目录
-│   ├── index.json             # 小说清单索引
-│   └── novels/                # 单个小说完整状态
-│       └── *.json
 ├── docs/                      # 文档（含 config-example.md 配置模板）
 ├── deploy.sh                  # 自动部署脚本
 ├── requirements.txt           # 核心依赖
@@ -54,7 +50,10 @@ StoryForge/
 └── README.md
 ```
 
-> 配置文件存放在用户主目录：`~/.storyforge/storyforge.yaml`，模板见 [docs/config-example.md](docs/config-example.md)。
+> 配置与数据存放在用户主目录：
+> - `~/.storyforge/storyforge.yaml`（配置文件）
+> - `~/.storyforge/data/`（小说数据目录）
+> 配置模板见 [docs/config-example.md](docs/config-example.md)。
 
 ## 快速开始
 
@@ -93,7 +92,7 @@ server:
   port: 5089            # 服务端口
 
 storage:
-  data_dir: ./data      # 数据存储目录
+  data_dir: ~/.storyforge/data   # 小说数据目录（支持绝对路径 / ~/ / 相对配置文件）
 ```
 
 #### 3. 运行示例并保存
@@ -255,7 +254,7 @@ llm:
   temperature: 0.7
 
 storage:
-  data_dir: ./data
+  data_dir: ~/.storyforge/data
 
 server:
   host: 0.0.0.0

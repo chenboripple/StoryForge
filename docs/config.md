@@ -35,7 +35,7 @@ llm:
   timeout: 60
 
 storage:
-  data_dir: ./data
+  data_dir: ~/.storyforge/data
 
 server:
   host: 0.0.0.0
@@ -113,13 +113,21 @@ llm:
 
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
-| `storage.data_dir` | 数据存储目录 | `./data` |
+| `storage.data_dir` | 小说数据目录（完全由配置决定） | `~/.storyforge/data` |
 
-**相对路径**：基于项目根目录解析
+**路径解析规则**（按优先级）：
+
+| 写法 | 解析方式 | 示例 |
+|------|----------|------|
+| 绝对路径 | 直接使用 | `/var/lib/storyforge/data` |
+| `~/...` | 相对用户主目录展开 | `~/.storyforge/data` → `/Users/you/.storyforge/data` |
+| 相对路径 | 相对于配置文件所在目录 | 配置文件 `~/.storyforge/storyforge.yaml`，`data_dir: data` → `~/.storyforge/data` |
+
+> 设计意图：data 目录与项目代码完全解耦，便于多项目共享数据、统一备份。
 
 **目录结构**：
 ```
-data/
+~/.storyforge/data/
 ├── index.json         # 小说清单索引
 └── novels/
     ├── demo_001.json  # 单个小说完整状态

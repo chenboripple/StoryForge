@@ -11,7 +11,7 @@ StoryForge 在原有「Pipeline / Agent / Core」三层基础上，扩展出 Web
 │   client/  +  backend/app.py                             │
 ├──────────────────────────────────────────────────────────┤
 │                    Storage Layer                         │
-│   JSON 文件持久化（index.json + novels/<id>.json）        │
+│   JSON 文件持久化（完全由配置决定，默认 ~/.storyforge/data/）│
 │   backend/storage.py                                     │
 ├──────────────────────────────────────────────────────────┤
 │                    Pipeline Layer                        │
@@ -56,10 +56,11 @@ StoryForge 在原有「Pipeline / Agent / Core」三层基础上，扩展出 Web
 
 ### 4. 配置外置
 
-所有可调参数（LLM、存储、服务器、Pipeline）统一通过 `.storyforge/storyforge.yaml` 管理：
-- 配置文件不入仓（`.gitignore`），可安全填写 API 密钥
+所有可调参数（LLM、存储、服务器、Pipeline）统一通过 `~/.storyforge/storyforge.yaml` 管理：
+- 配置文件存放在用户主目录，不会被任何 Git 仓库追踪，可安全填写 API 密钥
 - 通过 `core.config.get_config()` 单例访问
 - 部署脚本 `deploy.sh` 与 Flask 后端共用同一份配置
+- 数据目录由 yaml 中 `storage.data_dir` 决定，与项目代码完全解耦
 
 ### 5. LLM 抽象
 
@@ -99,8 +100,8 @@ NovelState (初始)
     │
     ▼
 ┌─────────────┐
-│  storage    │ ──JSON──► data/novels/<id>.json
-│ save_novel  │ ──索引──► data/index.json
+│  storage    │ ──JSON──► <data_dir>/novels/<id>.json
+│ save_novel  │ ──索引──► <data_dir>/index.json
 └─────────────┘
     │
     ▼
@@ -151,7 +152,7 @@ error_message, human_feedback, should_pause
 ```
 deploy.sh
    │
-   ├─► 读取 .storyforge/storyforge.yaml（通过临时 Python 进程）
+   ├─► 读取 ~/.storyforge/storyforge.yaml（通过临时 Python 进程）
    │
    ├─► 安装 Python 依赖 + 构建前端
    │
@@ -161,7 +162,7 @@ deploy.sh
                   backend/app.py
                          │
                          ├─► get_config()           ← core/config.py
-                         ├─► storage.list_novels()  ← backend/storage.py
+                         ├─► storage.list_novels()  ← backend/storage.py（从 ~/.storyforge/data/ 读取）
                          └─► serve client/build/    ← React 静态资源
 ```
 
