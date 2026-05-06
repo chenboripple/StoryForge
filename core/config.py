@@ -3,8 +3,8 @@ StoryForge - 配置加载
 
 配置文件位置（按优先级）：
   1. $STORYFORGE_CONFIG 指定的路径
-  2. <project_root>/.storyforge/storyforge.yaml  （项目级）
-  3. ~/.storyforge/storyforge.yaml               （用户级）
+  2. ~/.storyforge/storyforge.yaml               （用户级，推荐）
+  3. <project_root>/.storyforge/storyforge.yaml  （项目级）
   4. 内置默认值
 
 配置项包括：大模型、存储位置、服务器端口、Pipeline 行为等。
@@ -81,8 +81,8 @@ def _candidate_paths() -> list[str]:
     env_path = os.environ.get("STORYFORGE_CONFIG")
     if env_path:
         paths.append(env_path)
-    paths.append(os.path.join(_PROJECT_ROOT, ".storyforge", "storyforge.yaml"))
     paths.append(os.path.join(os.path.expanduser("~"), ".storyforge", "storyforge.yaml"))
+    paths.append(os.path.join(_PROJECT_ROOT, ".storyforge", "storyforge.yaml"))
     return paths
 
 

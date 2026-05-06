@@ -2,16 +2,16 @@
 set -e
 
 # StoryForge 自动部署脚本
-# 配置来自 .storyforge/storyforge.yaml
+# 配置来自 ~/.storyforge/storyforge.yaml
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_ROOT/.venv"
 DEPLOY_DIR="$PROJECT_ROOT/.deploy"
 LOG_DIR="$PROJECT_ROOT/logs"
 PID_FILE="$DEPLOY_DIR/server.pid"
-CONFIG_DIR="$PROJECT_ROOT/.storyforge"
-CONFIG_FILE="$CONFIG_DIR/storyforge.yaml"
-EXAMPLE_CONFIG="$CONFIG_DIR/storyforge.example.yaml"
+USER_CONFIG_DIR="$HOME/.storyforge"
+CONFIG_FILE="$USER_CONFIG_DIR/storyforge.yaml"
+CONFIG_EXAMPLE_MD="$PROJECT_ROOT/docs/config-example.md"
 
 # 默认端口（仅当读不到配置时使用）
 DEFAULT_PORT=5089
@@ -27,6 +27,21 @@ log_info() { echo -e "${BLUE}[INFO]${RESET} $1"; }
 log_ok() { echo -e "${GREEN}[OK]${RESET} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${RESET} $1"; }
 log_error() { echo -e "${RED}[ERROR]${RESET} $1"; }
+
+# 从 docs/config-example.md 提取 YAML 代码块
+_extract_example_yaml() {
+    if [ -f "$CONFIG_EXAMPLE_MD" ]; then
+        python3 - <<PYEOF
+import re
+with open("$CONFIG_EXAMPLE_MD", "r", encoding="utf-8") as f:
+    content = f.read()
+# 查找第一个 ```yaml ... ``` 代码块
+match = re.search(r"```yaml\n(.*?)\n```", content, re.DOTALL)
+if match:
+    print(match.group(1))
+PYEOF
+    fi
+}
 
 # 从配置文件读取端口（依赖虚拟环境内的 PyYAML）
 read_config() {
@@ -76,14 +91,17 @@ is_running() {
 mkdirs() {
     mkdir -p "$DEPLOY_DIR"
     mkdir -p "$LOG_DIR"
+    mkdir -p "$USER_CONFIG_DIR"
 }
 
-# 确保配置文件存在；不存在则从 example 复制
+# 确保配置文件存在；不存在则从 docs/config-example.md 复制
 ensure_config() {
     if [ ! -f "$CONFIG_FILE" ]; then
-        if [ -f "$EXAMPLE_CONFIG" ]; then
-            cp "$EXAMPLE_CONFIG" "$CONFIG_FILE"
-            log_warn "未找到配置文件，已从示例复制到: $CONFIG_FILE"
+        mkdir -p "$USER_CONFIG_DIR"
+        local yaml_content=$(_extract_example_yaml)
+        if [ -n "$yaml_content" ]; then
+            echo "$yaml_content" > "$CONFIG_FILE"
+            log_warn "未找到配置文件，已从 docs/config-example.md 复制到: $CONFIG_FILE"
             log_warn "请按需编辑该文件后重新部署"
         else
             log_warn "未找到配置文件，将使用内置默认值"
@@ -255,7 +273,7 @@ show_help() {
     cat <<EOF
 StoryForge 部署脚本
 
-配置文件: .storyforge/storyforge.yaml （首次运行会自动从 example 复制）
+配置文件: ~/.storyforge/storyforge.yaml （首次运行会自动从 docs/config-example.md 复制）
 
 用法:
   ./deploy.sh [命令]
@@ -280,9 +298,7 @@ EOF
 show_config() {
     if [ ! -f "$CONFIG_FILE" ]; then
         log_warn "配置文件不存在: $CONFIG_FILE"
-        if [ -f "$EXAMPLE_CONFIG" ]; then
-            log_info "可从示例复制: cp $EXAMPLE_CONFIG $CONFIG_FILE"
-        fi
+        log_info "文档位置: $CONFIG_EXAMPLE_MD"
         return
     fi
 

@@ -46,16 +46,15 @@ StoryForge/
 │   ├── index.json             # 小说清单索引
 │   └── novels/                # 单个小说完整状态
 │       └── *.json
-├── .storyforge/               # 配置目录
-│   ├── storyforge.yaml        # 实际运行配置（.gitignore）
-│   └── storyforge.example.yaml # 配置模板
-├── docs/                      # 文档
+├── docs/                      # 文档（含 config-example.md 配置模板）
 ├── deploy.sh                  # 自动部署脚本
 ├── requirements.txt           # 核心依赖
 ├── requirements-web.txt       # Web 服务依赖
 ├── LICENSE
 └── README.md
 ```
+
+> 配置文件存放在用户主目录：`~/.storyforge/storyforge.yaml`，模板见 [docs/config-example.md](docs/config-example.md)。
 
 ## 快速开始
 
@@ -82,7 +81,7 @@ pip install -r requirements-web.txt
 
 #### 2. 配置
 
-编辑 `.storyforge/storyforge.yaml`：
+编辑 `~/.storyforge/storyforge.yaml`（首次运行 `./deploy.sh` 会从 [docs/config-example.md](docs/config-example.md) 自动复制）：
 
 ```yaml
 llm:
@@ -123,7 +122,7 @@ from core.config import get_config
 from core.llm_factory import create_llm_client
 from pipeline.novel_pipeline import create_pipeline
 
-# 1. 加载配置（自动从 .storyforge/storyforge.yaml 读取）
+# 1. 加载配置（自动从 ~/.storyforge/storyforge.yaml 读取）
 config = get_config()
 
 # 2. 根据配置创建 LLM 客户端
@@ -245,7 +244,7 @@ writer(写作) → reviewer(审稿)
 
 ### 4. 配置系统
 
-统一通过 `.storyforge/storyforge.yaml` 配置：
+统一通过 `~/.storyforge/storyforge.yaml` 配置：
 
 ```yaml
 llm:
@@ -270,9 +269,11 @@ pipeline:
 
 配置加载优先级：
 1. `$STORYFORGE_CONFIG` 环境变量指定的路径
-2. `<项目根目录>/.storyforge/storyforge.yaml`
-3. `~/.storyforge/storyforge.yaml`
+2. `~/.storyforge/storyforge.yaml`  ← **推荐**
+3. `<项目根目录>/.storyforge/storyforge.yaml`
 4. 内置默认值
+
+完整配置示例与说明见 [docs/config-example.md](docs/config-example.md)。
 
 ## 文档
 
@@ -281,6 +282,7 @@ pipeline:
 - [Pipeline 流程详解](docs/pipeline.md)
 - [Web API 参考](docs/api-reference.md)
 - [配置系统说明](docs/config.md)
+- [配置文件示例](docs/config-example.md)
 
 ## 许可证
 

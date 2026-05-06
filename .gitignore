@@ -14,9 +14,6 @@ ENV/
 .deploy/
 logs/
 
-# Config (keep example.yaml, don't commit real.yaml with keys!)
-.storyforge/storyforge.yaml
-
 # Client
 client/node_modules/
 client/.env*

@@ -9,13 +9,13 @@ StoryForge 使用 YAML 配置文件管理所有设置（LLM、存储、服务器
 优先级从高到低：
 
 1. `$STORYFORGE_CONFIG` 环境变量指定的路径
-2. `<项目根目录>/.storyforge/storyforge.yaml`
-3. `~/.storyforge/storyforge.yaml`
+2. `~/.storyforge/storyforge.yaml`  ← **推荐位置**
+3. `<项目根目录>/.storyforge/storyforge.yaml`
 4. 内置默认值
 
 ### 首次运行
 
-`deploy.sh` 会自动从 `storyforge.example.yaml` 复制一份配置：
+`deploy.sh` 会自动从 `docs/config-example.md` 提取配置模板复制到 `~/.storyforge/storyforge.yaml`：
 
 ```bash
 ./deploy.sh config  # 查看当前配置文件
@@ -23,7 +23,7 @@ StoryForge 使用 YAML 配置文件管理所有设置（LLM、存储、服务器
 
 ### 编辑配置
 
-编辑 `.storyforge/storyforge.yaml`：
+编辑 `~/.storyforge/storyforge.yaml`：
 
 ```yaml
 llm:
@@ -47,7 +47,9 @@ pipeline:
   default_target_word_count: 3000
 ```
 
-**注意**：`.storyforge/storyforge.yaml` 已加入 `.gitignore`，不会被提交到 Git，可安全填写 API 密钥。
+**注意**：配置文件放在用户主目录，不会被任何 Git 仓库追踪，可安全填写 API 密钥。
+
+完整配置示例与更多说明见 [docs/config-example.md](config-example.md)。
 
 ---
 
@@ -193,6 +195,6 @@ config = load_config("/path/to/myconfig.yaml")
 ========================================
       StoryForge 部署状态
 ========================================
-配置文件: /path/to/.storyforge/storyforge.yaml
+配置文件: /Users/you/.storyforge/storyforge.yaml
 [OK] 配置: 已加载
 ```
