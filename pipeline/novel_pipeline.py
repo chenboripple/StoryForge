@@ -185,9 +185,9 @@ class NovelPipeline:
         # LangGraph 的 invoke 可能返回 dict，需要转换
         result = self.workflow.invoke(initial_state)
         
-        # 如果返回的是 dict，转换回 NovelState
+        # 如果返回的是 dict，转换回 NovelState（安全过滤非法字段）
         if isinstance(result, dict):
-            result = NovelState(**result)
+            result = NovelState.from_dict(result)
         
         print(f"\n✨ Pipeline 完成！")
         print(f"📊 最终状态：{result.current_stage.value}")
@@ -207,9 +207,11 @@ class NovelPipeline:
         """
         results = {}
         for chapter_num in chapters:
-            state.current_chapter = chapter_num
-            state.chapter_status[chapter_num] = ChapterStatus.PENDING
-            results[chapter_num] = self.run(state)
+            # 每次循环用深拷贝，避免各章状态互相污染
+            chapter_state = state.copy()
+            chapter_state.current_chapter = chapter_num
+            chapter_state.chapter_status[chapter_num] = ChapterStatus.PENDING
+            results[chapter_num] = self.run(chapter_state)
         return results
     
     def visualize(self):

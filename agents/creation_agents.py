@@ -4,7 +4,7 @@ NovelForge - 角色定义
 """
 
 from core.agent import AgentPersona, BaseAgent
-from core.state import NovelState, ReviewRecord, ChapterStatus
+from core.state import NovelState, ReviewRecord, ProofreadRecord, ChapterStatus
 
 import re
 from datetime import datetime
@@ -14,7 +14,7 @@ from datetime import datetime
 
 class MochuanPersona(AgentPersona):
     """墨川 - 小说家"""
-    
+
     def __init__(self):
         super().__init__(
             name="墨川",
@@ -25,7 +25,7 @@ class MochuanPersona(AgentPersona):
 相信好故事的本质是"在极端环境下测试人性"。""",
             expertise=[
                 "科幻世界观构建",
-                "人物心理刻画", 
+                "人物心理刻画",
                 "情节节奏控制",
                 "硬科学概念通俗化",
                 "长篇叙事结构"
@@ -47,7 +47,7 @@ class MochuanPersona(AgentPersona):
 
 class QingfengPersona(AgentPersona):
     """青锋 - 文学编辑"""
-    
+
     def __init__(self):
         super().__init__(
             name="青锋",
@@ -78,7 +78,7 @@ class QingfengPersona(AgentPersona):
 
 class YanqingPersona(AgentPersona):
     """砚清 - 文字校对专家"""
-    
+
     def __init__(self):
         super().__init__(
             name="砚清",
@@ -112,13 +112,13 @@ class YanqingPersona(AgentPersona):
 
 class WriterAgent(BaseAgent):
     """墨川 - 写作节点"""
-    
+
     def __init__(self, llm_client=None):
         super().__init__(MochuanPersona(), llm_client)
-    
+
     def invoke(self, state: NovelState) -> NovelState:
         """写作章节"""
-        
+
         # 构建上下文
         context = f"""
 【小说信息】
@@ -136,7 +136,7 @@ class WriterAgent(BaseAgent):
 【已完成的最近章节】
 {self._get_recent_chapters(state)}
 """
-        
+
         task = f"""请创作第{state.current_chapter}章，目标字数{state.target_word_count}字。
 
 要求：
@@ -147,22 +147,22 @@ class WriterAgent(BaseAgent):
 5. 结尾留悬念或钩子
 
 请直接输出章节正文，不需要标题和章节号。"""
-        
+
         # 调用 LLM
-        chapter_content = self._call_llm(task, context)
-        
+        chapter_content = self.call_llm(task, context)
+
         # 更新状态
         state.chapters[state.current_chapter] = chapter_content
         state.chapter_status[state.current_chapter] = ChapterStatus.DRAFT
         state.review_round = 0  # 重置审稿轮次
-        
+
         self._notify("chapter_written", {
             "chapter": state.current_chapter,
             "word_count": len(chapter_content)
         })
-        
+
         return state
-    
+
     def _format_characters(self, characters) -> str:
         """格式化角色信息"""
         if not characters:
@@ -171,31 +171,31 @@ class WriterAgent(BaseAgent):
             f"- {c.name}：{c.personality}。{c.background[:100]}..."
             for c in characters[:5]  # 只取前5个主要角色
         ])
-    
+
     def _get_recent_chapters(self, state: NovelState) -> str:
         """获取最近完成的章节摘要"""
         recent = []
         for i in range(max(1, state.current_chapter - 2), state.current_chapter):
             if i in state.chapters:
-                content = state.chapters[i][:200]
-                recent.append(f"第{i}章结尾：{content}...")
+                content = state.chapters[i][-200:]
+                recent.append(f"第{i}章结尾：...{content}")
         return "\n".join(recent) if recent else "无"
 
 
 class ReviewerAgent(BaseAgent):
     """青锋 - 审稿节点"""
-    
+
     def __init__(self, llm_client=None):
         super().__init__(QingfengPersona(), llm_client)
-    
+
     def invoke(self, state: NovelState) -> NovelState:
         """审稿并给出评分和建议"""
-        
+
         chapter_content = state.chapters.get(state.current_chapter, "")
         if not chapter_content:
             state.error_message = f"第{state.current_chapter}章无内容可审"
             return state
-        
+
         context = f"""
 【小说信息】
 {state.to_context_string()}
@@ -210,14 +210,14 @@ class ReviewerAgent(BaseAgent):
 【历史审稿记录】
 {self._format_reviews(state)}
 """
-        
+
         task = """请对以上章节进行审稿，按以下格式输出：
 
 【总体评分】XX分（0-100）
 
 【维度评分】
 - 叙事结构：XX分
-- 人物一致性：XX分  
+- 人物一致性：XX分
 - 文学性：XX分
 - 市场潜力：XX分
 
@@ -231,13 +231,13 @@ class ReviewerAgent(BaseAgent):
 1. ...
 
 【是否通过】通过/需修改/重写"""
-        
-        review_text = self._call_llm(task, context)
-        
+
+        review_text = self.call_llm(task, context)
+
         # 解析评分
         score = self._extract_score(review_text)
-        passed = "通过" in review_text and score >= 85
-        
+        passed = bool(re.search(r'【是否通过】\s*通过', review_text)) and score >= 85
+
         # 创建审稿记录
         record = ReviewRecord(
             round=state.review_round + 1,
@@ -247,42 +247,51 @@ class ReviewerAgent(BaseAgent):
             passed=passed,
             timestamp=datetime.now().isoformat()
         )
-        
+
         # 更新状态
         if state.current_chapter not in state.reviews:
             state.reviews[state.current_chapter] = []
         state.reviews[state.current_chapter].append(record)
         state.review_round += 1
-        
+
         if passed:
             state.chapter_status[state.current_chapter] = ChapterStatus.APPROVED
         else:
             state.chapter_status[state.current_chapter] = ChapterStatus.IN_REVIEW
-        
+
         self._notify("chapter_reviewed", {
             "chapter": state.current_chapter,
             "round": record.round,
             "score": score,
             "passed": passed
         })
-        
+
         return state
-    
+
     def _extract_score(self, text: str) -> int:
         """从审稿意见中提取评分"""
-        # 匹配 "总体评分】85分" 或 "评分：85" 等格式
+        # 优先匹配 "总体评分】85分" 或 "评分：85" 等精确格式
         patterns = [
             r'总体评分[】\:]\s*(\d+)',
             r'评分[】\:]\s*(\d+)',
-            r'(\d{2,3})\s*分'
         ]
         for pattern in patterns:
             match = re.search(pattern, text)
             if match:
                 score = int(match.group(1))
                 return min(100, max(0, score))  # 限制在0-100
+
+        # 兜底：匹配独立的 "XX分"，但排除 "XX分钟/秒/天" 等时间单位
+        fallback = re.search(r'(\d{2,3})\s*分', text)
+        if fallback:
+            # 检查后面是否跟着时间单位，排除误匹配
+            end_pos = fallback.end()
+            if end_pos >= len(text) or text[end_pos] not in ('钟', '秒', '天', '月', '年'):
+                score = int(fallback.group(1))
+                return min(100, max(0, score))
+
         return 70  # 默认评分
-    
+
     def _format_characters(self, characters) -> str:
         """格式化角色信息"""
         if not characters:
@@ -291,7 +300,7 @@ class ReviewerAgent(BaseAgent):
             f"- {c.name}：{c.personality}"
             for c in characters
         ])
-    
+
     def _format_reviews(self, state: NovelState) -> str:
         """格式化历史审稿记录"""
         reviews = state.reviews.get(state.current_chapter, [])
@@ -305,22 +314,23 @@ class ReviewerAgent(BaseAgent):
 
 class ReviserAgent(BaseAgent):
     """修改节点（也是墨川，但任务不同）"""
-    
+
+    # 修改时的额外提示（通过 call_llm 的 extra_system_prompt 参数传递，线程安全）
+    _extra_system_prompt = "【注意】当前任务是根据编辑意见修改，请保持开放心态采纳建议。"
+
     def __init__(self, llm_client=None):
         super().__init__(MochuanPersona(), llm_client)
-        # 修改时调整语气，更配合编辑
-        self.persona.tone += "（当前任务：根据编辑意见修改，保持开放心态）"
-    
+
     def invoke(self, state: NovelState) -> NovelState:
         """根据审稿意见修改"""
-        
+
         chapter_content = state.chapters.get(state.current_chapter, "")
         latest_review = state.get_latest_review()
-        
+
         if not latest_review:
             state.error_message = "无审稿记录，无法修改"
             return state
-        
+
         context = f"""
 【当前章节内容】
 {chapter_content}
@@ -330,7 +340,7 @@ class ReviserAgent(BaseAgent):
 
 【历史修改轮次】{state.review_round}轮
 """
-        
+
         task = """请根据以上审稿意见修改章节。
 
 要求：
@@ -340,40 +350,45 @@ class ReviserAgent(BaseAgent):
 4. 输出完整的修改后章节（不是修改说明）
 
 请直接输出修改后的完整章节正文。"""
-        
-        revised_content = self._call_llm(task, context)
-        
+
+        # 通过参数传递额外提示，不修改 persona 实例（线程安全、异常安全）
+        revised_content = self.call_llm(
+            task,
+            context,
+            extra_system_prompt=self._extra_system_prompt
+        )
+
         # 更新状态
         state.chapters[state.current_chapter] = revised_content
         state.chapter_status[state.current_chapter] = ChapterStatus.REVISING
-        
+
         self._notify("chapter_revised", {
             "chapter": state.current_chapter,
             "round": state.review_round
         })
-        
+
         return state
 
 
 class ProofreaderAgent(BaseAgent):
     """砚清 - 校对节点"""
-    
+
     def __init__(self, llm_client=None):
         super().__init__(YanqingPersona(), llm_client)
-    
+
     def invoke(self, state: NovelState) -> NovelState:
         """最终校对"""
-        
+
         chapter_content = state.chapters.get(state.current_chapter, "")
-        
+
         context = f"""
 【章节内容】
 {chapter_content}
 
 【角色名单】（请检查一致性）
-{[c.name for c in state.characters]}
+{'、'.join(c.name for c in state.characters) if state.characters else '无'}
 """
-        
+
         task = """请对以上章节进行最终校对，检查：
 
 1. 错别字、标点错误
@@ -394,30 +409,43 @@ class ProofreaderAgent(BaseAgent):
 通过 / 需返工
 
 如果无错误，直接输出"通过"。"""
-        
-        proofread_result = self._call_llm(task, context)
-        
-        # 判断是否通过
-        passed = "通过" in proofread_result and "需返工" not in proofread_result
-        
+
+        proofread_result = self.call_llm(task, context)
+
+        # 判断是否通过（精确匹配，避免"未通过"里的"通过"被误判）
+        passed = (
+            re.search(r'【总体评价】\s*通过', proofread_result) is not None
+            or (proofread_result.strip() == "通过")
+        )
+        # 如果有"需返工"，则不通过
+        if "需返工" in proofread_result:
+            passed = False
+
+        # 计算这是第几轮校对
+        chapter_proofreads = state.proofread_records.get(state.current_chapter, [])
+        current_proofread_round = len(chapter_proofreads) + 1
+
+        # 保存校对记录到独立字段，不混进审稿记录
+        proofread_record = ProofreadRecord(
+            round=current_proofread_round,
+            proofreader=self.persona.name,
+            comments=proofread_result,
+            passed=passed,
+            timestamp=datetime.now().isoformat()
+        )
+        state.proofread_records.setdefault(state.current_chapter, []).append(proofread_record)
+
         if passed:
             state.chapter_status[state.current_chapter] = ChapterStatus.APPROVED
         else:
             state.chapter_status[state.current_chapter] = ChapterStatus.PROOFREADING
-            # 把校对意见加入审稿记录，触发修改
-            state.reviews.setdefault(state.current_chapter, []).append(
-                ReviewRecord(
-                    round=state.review_round + 1,
-                    reviewer=self.persona.name,
-                    score=80 if passed else 50,
-                    comments=proofread_result,
-                    passed=passed
-                )
-            )
-        
+            # 注意：这里不修改 reviews 字段，只在 proofread_records 保存校对记录
+            # 如果需要触发修改流程，可以单独处理
+
         self._notify("chapter_proofread", {
             "chapter": state.current_chapter,
+            "round": current_proofread_round,
             "passed": passed
         })
-        
+
         return state

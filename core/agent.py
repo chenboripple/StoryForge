@@ -125,24 +125,30 @@ class BaseAgent(ABC):
         """
         pass
     
-    def _call_llm(
+    def call_llm(
         self,
         task: str,
         context: str = "",
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        extra_system_prompt: str = ""
     ) -> str:
         """
-        调用 LLM，自动注入人设
-        
+        调用 LLM，自动注入人设（公共接口）
+
         Args:
             task: 具体任务描述
             context: 任务上下文（来自 State）
             temperature: 覆盖默认温度
+            extra_system_prompt: 追加到系统提示词的额外文本（不修改 persona）
         """
         if not self.llm_client:
             raise ValueError(f"{self.persona.name} 未配置 LLM 客户端")
-        
-        prompt = f"""{self.persona.system_prompt()}
+
+        system_prompt = self.persona.system_prompt()
+        if extra_system_prompt:
+            system_prompt += "\n" + extra_system_prompt
+
+        prompt = f"""{system_prompt}
 
 ========== 任务上下文 ==========
 {context}
@@ -151,19 +157,19 @@ class BaseAgent(ABC):
 {task}
 
 请直接输出结果，不需要解释你的思考过程。"""
-        
+
         self._notify("llm_request", {
             "agent": self.persona.name,
             "task": task[:100]  # 截断用于日志
         })
-        
+
         result = self.llm_client(prompt, temperature=temperature)
-        
+
         self._notify("llm_response", {
             "agent": self.persona.name,
             "result_length": len(result)
         })
-        
+
         return result
 
 
@@ -188,14 +194,15 @@ class Task:
         self.agent = agent
         self.context_tasks = context_tasks or []
     
-    def execute(self, state: NovelState) -> str:
+    def execute(self, state: NovelState, extra_system_prompt: str = "") -> str:
         """执行任务"""
         if not self.agent:
             raise ValueError(f"任务 '{self.description}' 未分配 Agent")
-        
+
         context = state.to_context_string()
-        
-        return self.agent._call_llm(
+
+        return self.agent.call_llm(
             task=self.description,
-            context=context
+            context=context,
+            extra_system_prompt=extra_system_prompt
         )

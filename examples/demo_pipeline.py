@@ -3,7 +3,8 @@ NovelForge - 示例：运行 Pipeline
 """
 
 import sys
-sys.path.insert(0, '/Users/ripple/NovelForge')
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.state import NovelState, CharacterInfo
 from pipeline.novel_pipeline import create_pipeline
@@ -154,9 +155,13 @@ def mock_llm(prompt: str, temperature: float = None) -> str:
         return "收到任务，处理完成。"
 
 
-def main():
-    """运行示例"""
-    
+def main(save_to_storage: bool = False):
+    """运行示例
+
+    Args:
+        save_to_storage: 是否保存结果到 storage 供 Web 界面展示
+    """
+
     # 1. 准备初始状态
     state = NovelState(
         novel_id="demo_001",
@@ -190,24 +195,24 @@ def main():
             )
         ]
     )
-    
+
     # 2. 创建 Pipeline
     pipeline = create_pipeline(llm_client=mock_llm)
-    
+
     # 3. 运行（可以打印图结构）
     print("=" * 50)
     print("Pipeline 图结构（Mermaid 语法）：")
     print("=" * 50)
     print(pipeline.visualize())
     print("\n")
-    
+
     # 4. 执行
     print("=" * 50)
     print("开始执行 Pipeline")
     print("=" * 50)
-    
+
     result = pipeline.run(state)
-    
+
     # 5. 查看结果
     print("\n" + "=" * 50)
     print("最终结果")
@@ -215,16 +220,30 @@ def main():
     print(f"章节状态：{result.chapter_status.get(1)}")
     print(f"审稿轮次：{result.review_round}")
     print(f"最终阶段：{result.current_stage.value}")
-    
+
     if 1 in result.chapters:
         print(f"\n章节预览（前200字）：")
         print(result.chapters[1][:200] + "...")
-    
+
     if 1 in result.reviews:
         print(f"\n审稿记录：")
         for r in result.reviews[1]:
             print(f"  第{r.round}轮 - {r.reviewer}: {r.score}分 {'✅' if r.passed else '❌'}")
 
+    # 6. 可选：保存到 storage 供 Web 界面展示
+    if save_to_storage:
+        print("\n" + "=" * 50)
+        print("保存到 Storage")
+        print("=" * 50)
+        from backend import storage
+        storage.save_novel(result)
+        print(f"已保存：{result.novel_id}")
+        print("可通过 Web 界面查看：http://localhost:3000")
+
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--save", action="store_true", help="保存结果到 storage")
+    args = parser.parse_args()
+    main(save_to_storage=args.save)

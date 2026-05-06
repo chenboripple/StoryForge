@@ -6,6 +6,7 @@ NovelForge - 核心状态定义
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 from enum import Enum
+import copy
 
 
 class ChapterStatus(Enum):
@@ -34,7 +35,17 @@ class ReviewRecord:
     score: int                  # 评分 0-100
     comments: str               # 审稿意见
     passed: bool                # 是否通过
-    timestamp: str = ""         # 时间戳
+    timestamp: Optional[str] = None  # 时间戳
+
+
+@dataclass
+class ProofreadRecord:
+    """校对记录"""
+    round: int                  # 第几轮校对
+    proofreader: str            # 校对人名字
+    comments: str               # 校对意见
+    passed: bool                # 是否通过
+    timestamp: Optional[str] = None  # 时间戳
 
 
 @dataclass
@@ -86,6 +97,7 @@ class NovelState:
     review_round: int = 0                       # 当前审稿轮次
     max_review_rounds: int = 3                  # 最大审稿轮次
     reviews: Dict[int, List[ReviewRecord]] = field(default_factory=dict)  # 章节审稿记录
+    proofread_records: Dict[int, List[ProofreadRecord]] = field(default_factory=dict)  # 章节校对记录
     
     # ==================== 阶段二：萃取层 ====================
     knowledge_base: Dict[str, Any] = field(default_factory=dict)
@@ -140,3 +152,140 @@ class NovelState:
         if self.outline:
             context += f"\n大纲摘要：{self.outline[:200]}..."
         return context
+
+    def copy(self) -> "NovelState":
+        """深拷贝，用于批量创作时隔离各章状态"""
+        return copy.deepcopy(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "NovelState":
+        """从字典安全构造，自动过滤不在 dataclass 中的字段"""
+        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in data.items() if k in valid_fields}
+
+        # 反序列化嵌套对象
+        if "current_stage" in filtered and isinstance(filtered["current_stage"], str):
+            filtered["current_stage"] = PipelineStage(filtered["current_stage"])
+
+        if "characters" in filtered and isinstance(filtered["characters"], list):
+            filtered["characters"] = [
+                CharacterInfo(**c) if isinstance(c, dict) else c
+                for c in filtered["characters"]
+            ]
+
+        if "chapter_status" in filtered and isinstance(filtered["chapter_status"], dict):
+            filtered["chapter_status"] = {
+                int(k): ChapterStatus(v) if isinstance(v, str) else v
+                for k, v in filtered["chapter_status"].items()
+            }
+
+        if "chapters" in filtered and isinstance(filtered["chapters"], dict):
+            filtered["chapters"] = {int(k): v for k, v in filtered["chapters"].items()}
+
+        if "volume_outline" in filtered and isinstance(filtered["volume_outline"], dict):
+            filtered["volume_outline"] = {int(k): v for k, v in filtered["volume_outline"].items()}
+
+        if "reviews" in filtered and isinstance(filtered["reviews"], dict):
+            filtered["reviews"] = {
+                int(k): [ReviewRecord(**r) if isinstance(r, dict) else r for r in v]
+                for k, v in filtered["reviews"].items()
+            }
+
+        if "proofread_records" in filtered and isinstance(filtered["proofread_records"], dict):
+            filtered["proofread_records"] = {
+                int(k): [ProofreadRecord(**p) if isinstance(p, dict) else p for p in v]
+                for k, v in filtered["proofread_records"].items()
+            }
+
+        return cls(**filtered)
+
+    def to_dict(self) -> dict:
+        """序列化为字典（JSON 友好），用于存储与 API 输出"""
+        return {
+            # 元数据
+            "novel_id": self.novel_id,
+            "novel_title": self.novel_title,
+            "genre": self.genre,
+            "target_word_count": self.target_word_count,
+            "current_stage": self.current_stage.value if isinstance(self.current_stage, PipelineStage) else self.current_stage,
+            # 创作层
+            "concept": self.concept,
+            "outline": self.outline,
+            "volume_outline": {str(k): v for k, v in self.volume_outline.items()},
+            "characters": [
+                {
+                    "name": c.name,
+                    "age": c.age,
+                    "appearance": c.appearance,
+                    "personality": c.personality,
+                    "background": c.background,
+                    "goals": list(c.goals),
+                    "relationships": dict(c.relationships),
+                    "classic_lines": list(c.classic_lines),
+                }
+                for c in self.characters
+            ],
+            "chapters": {str(k): v for k, v in self.chapters.items()},
+            "chapter_status": {
+                str(k): (v.value if isinstance(v, ChapterStatus) else v)
+                for k, v in self.chapter_status.items()
+            },
+            # 审稿
+            "current_chapter": self.current_chapter,
+            "review_round": self.review_round,
+            "max_review_rounds": self.max_review_rounds,
+            "reviews": {
+                str(k): [
+                    {
+                        "round": r.round,
+                        "reviewer": r.reviewer,
+                        "score": r.score,
+                        "comments": r.comments,
+                        "passed": r.passed,
+                        "timestamp": r.timestamp,
+                    }
+                    for r in v
+                ]
+                for k, v in self.reviews.items()
+            },
+            "proofread_records": {
+                str(k): [
+                    {
+                        "round": p.round,
+                        "proofreader": p.proofreader,
+                        "comments": p.comments,
+                        "passed": p.passed,
+                        "timestamp": p.timestamp,
+                    }
+                    for p in v
+                ]
+                for k, v in self.proofread_records.items()
+            },
+            # 萃取层 / IP 层
+            "knowledge_base": self.knowledge_base,
+            "character_ips": self.character_ips,
+            "visual_assets": self.visual_assets,
+            # 控制
+            "error_message": self.error_message,
+            "human_feedback": self.human_feedback,
+            "should_pause": self.should_pause,
+        }
+
+    def to_index_entry(self) -> dict:
+        """生成轻量索引条目（用于清单页）"""
+        total_chapters = len(self.chapters)
+        approved_chapters = sum(
+            1 for s in self.chapter_status.values()
+            if s == ChapterStatus.APPROVED
+        )
+        return {
+            "novel_id": self.novel_id,
+            "novel_title": self.novel_title,
+            "genre": self.genre,
+            "concept": self.concept[:120] if self.concept else "",
+            "current_stage": self.current_stage.value if isinstance(self.current_stage, PipelineStage) else self.current_stage,
+            "current_chapter": self.current_chapter,
+            "total_chapters": total_chapters,
+            "approved_chapters": approved_chapters,
+            "character_count": len(self.characters),
+        }
