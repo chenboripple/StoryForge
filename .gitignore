@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg-info/
+.venv/
+venv/
+ENV/
+
+# Deployment
+.deploy/
+logs/
+
+# Client
+client/node_modules/
+client/.env*
+client/build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Generated data (keep index template, not user data)
+data/
+
+# Local config (now at ~/.storyforge/)
+.storyforge/
