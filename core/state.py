@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Any
 from enum import Enum
 import copy
 
-from core.settings import get_settings
+from core.config import get_config
 
 
 class ChapterStatus(Enum):
@@ -85,9 +85,6 @@ class RoutingSuggestion:
     timestamp: str = ""
 
 
-DEFAULT_SETTINGS = get_settings()
-
-
 @dataclass
 class NovelState:
     """小说全局状态"""
@@ -96,7 +93,7 @@ class NovelState:
     novel_id: str = ""
     novel_title: str = ""
     genre: str = ""
-    target_word_count: int = DEFAULT_SETTINGS.pipeline.default_target_word_count
+    target_word_count: int = field(default_factory=lambda: get_config().pipeline.default_target_word_count)
     current_stage: PipelineStage = PipelineStage.CREATION
 
     # 创作层
