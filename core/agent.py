@@ -198,7 +198,8 @@ class BaseAgent(ABC):
         memory: Optional[StoryMemory] = None,
         error_handler: Optional[ErrorHandler] = None,
         use_json_mode: bool = False,  # 是否要求 LLM 输出 JSON
-        message_bus: Optional[MessageBus] = None  # Agent 间通信总线
+        message_bus: Optional[MessageBus] = None,  # Agent 间通信总线
+        state: Optional[Any] = None  # 可选：直接绑定 state 用于无 message_bus 场景
     ):
         self.persona = persona
         self.llm_client = llm_client
@@ -206,12 +207,13 @@ class BaseAgent(ABC):
         self.error_handler = error_handler or ErrorHandler()
         self.use_json_mode = use_json_mode
         self.message_bus = message_bus  # 消息总线
+        self.state = state  # 可选：直接绑定 state
         self.callbacks: List[Callable] = []
         self.retry_executor = RetryWithBackoff(
             max_retries=self.error_handler.max_retries + 1,
             base_delay=1.0
         )
-        
+
         # 如果提供了消息总线，自动订阅相关消息
         if self.message_bus:
             self._setup_message_subscriptions()
@@ -239,19 +241,31 @@ class BaseAgent(ABC):
         chapter: Optional[int] = None,
         priority: str = "normal"
     ):
-        """发布消息到总线"""
-        if not self.message_bus:
-            return
-        
-        message = AgentMessage(
-            sender=self.persona.name,
-            msg_type=msg_type,
-            content=content,
-            target=target,
-            chapter=chapter or getattr(self, '_current_chapter', None),
-            priority=priority
-        )
-        self.message_bus.publish(message)
+        """发布消息到总线（同时持久化到 state 如果可用）"""
+        chapter = chapter or getattr(self, '_current_chapter', None)
+
+        # 1. 发布到 MessageBus
+        if self.message_bus:
+            message = AgentMessage(
+                sender=self.persona.name,
+                msg_type=msg_type,
+                content=content,
+                target=target,
+                chapter=chapter,
+                priority=priority
+            )
+            self.message_bus.publish(message)
+
+        # 2. 持久化到 state（无 MessageBus 或作为备份）
+        if self.state and hasattr(self.state, 'add_agent_message'):
+            self.state.add_agent_message(
+                sender=self.persona.name,
+                msg_type=msg_type,
+                content=content,
+                target=target,
+                chapter=chapter,
+                priority=priority
+            )
     
     def get_messages_from_bus(
         self,
@@ -266,6 +280,80 @@ class BaseAgent(ABC):
             msg_type=msg_type,
             chapter=chapter
         )
+
+    def get_messages_from_state(
+        self,
+        msg_type: Optional[str] = None,
+        chapter: Optional[int] = None,
+        limit: int = 10
+    ) -> List[Dict]:
+        """从 state 获取消息（MessageBus 不可用时的回退）"""
+        if not self.state or not hasattr(self.state, 'get_agent_messages'):
+            return []
+        return self.state.get_agent_messages(
+            msg_type=msg_type,
+            chapter=chapter,
+            limit=limit
+        )
+
+    def suggest_route(
+        self,
+        suggested_node: str,
+        reason: str,
+        confidence: float = 0.8,
+        chapter: Optional[int] = None
+    ):
+        """Agent 建议下一步路由（存入 state）"""
+        chapter = chapter or getattr(self, '_current_chapter', None)
+        if self.state and hasattr(self.state, 'add_routing_suggestion'):
+            self.state.add_routing_suggestion(
+                suggested_by=self.persona.name,
+                suggested_node=suggested_node,
+                reason=reason,
+                confidence=confidence,
+                chapter=chapter
+            )
+        # 同时作为消息发布
+        self.publish_message(
+            msg_type="routing_suggestion",
+            content=f"建议下一步：{suggested_node}。原因：{reason}",
+            chapter=chapter,
+            priority="high"
+        )
+
+    def _get_agent_messages_for_prompt(
+        self,
+        state: Any,
+        msg_type: Optional[str] = None,
+        limit: int = 5
+    ) -> str:
+        """获取 Agent 消息用于 prompt 上下文"""
+        messages = []
+
+        # 优先从 MessageBus 获取
+        if self.message_bus:
+            bus_messages = self.message_bus.get_messages(
+                agent=self.persona.name,
+                msg_type=msg_type,
+                chapter=getattr(state, 'current_chapter', None)
+            )
+            for m in bus_messages[-limit:]:
+                messages.append(f"[{m.sender}] {m.msg_type}: {m.content}")
+
+        # 从 state 获取（回退）
+        if not messages and hasattr(state, 'get_agent_messages'):
+            state_messages = state.get_agent_messages(
+                msg_type=msg_type,
+                chapter=getattr(state, 'current_chapter', None),
+                limit=limit
+            )
+            for m in state_messages:
+                messages.append(f"[{m['sender']}] {m['msg_type']}: {m['content']}")
+
+        if not messages:
+            return ""
+
+        return "\n".join(["\n【来自其他 Agent 的消息】"] + messages)
     
     def add_callback(self, callback: Callable):
         self.callbacks.append(callback)

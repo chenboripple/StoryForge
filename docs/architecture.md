@@ -2,126 +2,124 @@
 
 ## 整体架构
 
-StoryForge 在原有「Pipeline / Agent / Core」三层基础上，扩展出 Web UI、Config、Storage、LLM Factory 等支撑层，整体形成一个可独立运行的多 Agent 创作平台：
+StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph 流程编排与 CrewAI 风格角色系统构建：
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    Web UI Layer                          │
-│   React 前端（清单页 / 详情页） + Flask 后端（REST API）  │
-│   client/  +  backend/app.py                             │
-├──────────────────────────────────────────────────────────┤
-│                    Storage Layer                         │
-│   JSON 文件持久化（完全由配置决定，默认 ~/.storyforge/data/）│
-│   backend/storage.py                                     │
-├──────────────────────────────────────────────────────────┤
-│                    Pipeline Layer                        │
-│   (LangGraph 图结构 + 状态机 + 路由)                       │
-│   NovelPipeline、条件边、循环边                            │
-├──────────────────────────────────────────────────────────┤
-│                    Agent Layer                           │
-│   (CrewAI 风格角色 + LLM 调用抽象)                         │
-│   WriterAgent、ReviewerAgent、ReviserAgent、Proofreader   │
-├──────────────────────────────────────────────────────────┤
-│                    Core Layer                            │
-│   状态定义 + 角色基类 + 任务定义 + 配置 + LLM 工厂          │
-│   NovelState、AgentPersona、BaseAgent、Config、LLM Factory│
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Web 前端层                                   │
+├─────────────────────────────────────────────────────────────────────┤
+│  web_console/  (FastAPI, 端口 8787)                                 │
+│  - 任务管理界面                                                      │
+│  - 创作进度监控                                                      │
+│  - 人物 IP 操作区                                                    │
+│  - 日志查看                                                          │
+│                                                                      │
+│  backend/  (Flask, 端口 5089)                                        │
+│  - 小说清单/详情 API                                                 │
+│  - 静态文件服务                                                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                         存储层                                       │
+│  - ~/.storyforge/data/  (小说数据, YAML 配置决定)                    │
+│  - local_store/vector_store.jsonl  (向量库)                         │
+│  - local_store/ip_assets/  (IP 资产)                                │
+│  - debug_output/  (调试输出)                                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                       Pipeline 层 (LangGraph)                         │
+┌─────────────────────────────────────────────────────────────────────┐
+│  创作阶段：outline_refiner → writer → reviewer → reviser → proofread │
+│  萃取阶段：knowledge_extractor  (从章节提取知识 → memory)            │
+│  IP 阶段：ip_designer  (生成 story bible + 人物 IP)                  │
+│  支持：checkpoint 断点续跑、条件路由、AI 味检测                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                        Agent 层                                      │
+┌─────────────────────────────────────────────────────────────────────┐
+│  Writer(墨川) | Reviewer(青锋) | Reviser(墨川) | Proofreader(砚清)  │
+│  支持：MessageBus (Agent 间通讯)、memory、JSON 结构化输出            │
+├─────────────────────────────────────────────────────────────────────┤
+│                        Core 层                                       │
+┌─────────────────────────────────────────────────────────────────────┐
+│  core/state.py           NovelState, ChapterStatus, ReviewRecord     │
+│  core/agent.py           BaseAgent, AgentPersona, MessageBus         │
+│  core/schema.py          ReviewResult, ProofreadResult, ChapterContent│
+│  core/memory.py          StoryMemory (事件/人物/世界状态)            │
+│  core/prompt_assembler.py  PromptAssembler (动态Prompt+人味化)       │
+│  core/settings.py        ~/.storyforge/config.json  (web_console用)  │
+│  core/config.py          ~/.storyforge/storyforge.yaml  (backend用)  │
+├─────────────────────────────────────────────────────────────────────┤
+│                       stages/ 模块                                   │
+│  stages/outline/         OutlineGenerator (章级细纲生成)            │
+│  stages/extraction/      KnowledgeExtractor (知识萃取)              │
+│  stages/ip_generation/   IPGenerator (IP 资产生成)                 │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+## 配置系统说明
+
+StoryForge 使用两套配置系统（历史原因，两者共存）：
+
+### 1. web_console 配置 (JSON)
+- 文件位置：`~/.storyforge/config.json`
+- 加载入口：`core/settings.py`
+- 用途：FastAPI 操作界面、任务管理、IP 生成
+- 环境变量前缀：`STORYFORGE_*`
+
+### 2. backend 配置 (YAML)
+- 文件位置：`~/.storyforge/storyforge.yaml`
+- 加载入口：`core/config.py`
+- 用途：Flask API 服务、数据存储
+- 环境变量前缀：`STORYFORGE_CONFIG`
 
 ## 设计原则
 
-### 1. 状态驱动
-
+### 状态驱动
 所有 Agent 节点读写同一个 `NovelState` 对象：
 - 输入：当前全局状态
 - 输出：更新后的全局状态
 - LangGraph 负责状态的流转和持久化
 - `to_dict()` / `from_dict()` 支持完整的 JSON 序列化与反序列化（含枚举、嵌套 dataclass、int 章节键）
 
-### 2. 角色即提示词工程
-
+### 角色即提示词工程
 `AgentPersona` 的每个字段都有明确的工程用途：
-- `backstory` → 影响 LLM 语气和知识倾向
-- `expertise` → 影响任务分配和工具使用
-- `tone` → 影响输出文本的调性
-- `principles` → 影响决策逻辑
-- `constraints` → 影响输出边界
+- `backstory`：影响 LLM 语气和知识倾向
+- `expertise`：影响任务分配和工具使用
+- `tone`：影响输出文本的调性
+- `principles`：影响决策逻辑
+- `constraints`：影响输出边界
 
-### 3. 纯函数 Agent
+### 结构化输出 + 人味化
+- 审稿/校对使用 JSON Schema 确保可解析
+- PromptAssembler 自动集成人味化规则：禁用 AI 常见句式、提升文本自然度
+- AI 味检测（low/medium/high）：high 等级自动触发重写
 
-每个 Agent 的 `invoke(state) -> state` 是纯函数：
-- 不依赖外部状态
-- 相同的输入产生相同的输出
-- 便于测试、调试和并行化
+### 记忆系统
+- StoryMemory：事件时间线 + 人物状态 + 世界设定
+- 一致性检查：自动检测人物名字、设定、时间线矛盾
+- 用于创作上下文注入
 
-### 4. 配置外置
+### Agent 间通讯 (MessageBus)
+- 发布/订阅模式
+- 按类型过滤
+- 定向投递
+- 消息持久化
 
-所有可调参数（LLM、存储、服务器、Pipeline）统一通过 `~/.storyforge/storyforge.yaml` 管理：
-- 配置文件存放在用户主目录，不会被任何 Git 仓库追踪，可安全填写 API 密钥
-- 通过 `core.config.get_config()` 单例访问
-- 部署脚本 `deploy.sh` 与 Flask 后端共用同一份配置
-- 数据目录由 yaml 中 `storage.data_dir` 决定，与项目代码完全解耦
+## 阶段详解
 
-### 5. LLM 抽象
+### 阶段一：创作 (Creation)
+1. **大纲细化** (outline_refiner)：从卷纲生成章级细纲
+2. **写作** (writer)：基于细纲创作章节
+3. **审稿** (reviewer)：8维度结构化评分 + AI味评估
+4. **修改** (reviser)：根据审稿意见修改
+5. **校对** (proofreader)：6层级检查 + 终审判定（可发布/可交付/需返修）
 
-通过 `core.llm_factory.create_llm_client(cfg)` 工厂函数屏蔽 provider 差异：
-- 内置 `mock`、`openai`、`anthropic` 三种 provider
-- 兼容 OpenAI 协议的服务（DeepSeek、vLLM 等）通过 `base_url` 切换
-- 客户端是简单的 `(prompt, temperature) -> str` 闭包，与上层完全解耦
+### 阶段二：萃取 (Extraction)
+- 从章节提取事件、人物、伏笔
+- 构建知识图谱
+- 更新 memory
 
-## 数据流
-
-```
-NovelState (初始)
-    │
-    ▼
-┌─────────────┐
-│   writer    │ ──LLM──► 生成章节内容
-└─────────────┘
-    │
-    ▼ NovelState (含章节内容)
-┌─────────────┐
-│  reviewer   │ ──LLM──► 评分 + 审稿意见
-└─────────────┘
-    │
-    ▼ NovelState (含审稿记录)
-┌─────────────┐
-│  _router_   │ ──逻辑──► 条件路由
-└─────────────┘
-    │  ≥85分      60-84分      <60分
-    ▼             ▼            ▼
-┌──────┐    ┌──────────┐  ┌────────┐
-│proof │    │ reviser  │  │ writer │
-│reader│    │(修改)    │  │(重写)  │
-└──────┘    └──────────┘  └────────┘
-    │             │
-    ▼             ▼ (循环)
-  结束        reviewer
-    │
-    ▼
-┌─────────────┐
-│  storage    │ ──JSON──► <data_dir>/novels/<id>.json
-│ save_novel  │ ──索引──► <data_dir>/index.json
-└─────────────┘
-    │
-    ▼
-┌─────────────┐
-│  Flask API  │ ──HTTP──► React 前端
-│  /api/...   │
-└─────────────┘
-```
-
-## 模块职责
-
-| 模块 | 路径 | 职责 |
-|------|------|------|
-| Core | `core/` | 状态、角色、任务、配置、LLM 工厂等基础设施 |
-| Agents | `agents/` | 具体 Agent 实现（写作、审稿、修改、校对） |
-| Pipeline | `pipeline/` | LangGraph 流程编排与路由 |
-| Backend | `backend/` | Flask Web 服务 + JSON 存储层 |
-| Client | `client/` | React 前端（小说清单 / 详情页 / 章节预览） |
-| Examples | `examples/` | 端到端演示（含 `--save` 选项写入 storage） |
-| Deploy | `deploy.sh` | 一键部署脚本（依赖安装、前端构建、gunicorn 守护进程） |
+### 阶段三：IP 生成 (IP Generation)
+- 生成 story bible
+- 人物 IP 资产（人设、台词、画像提示词）
+- 存入 `local_store/ip_assets/`
 
 ## 状态字段分组
 
@@ -131,44 +129,28 @@ NovelState (初始)
 # 元数据
 novel_id, novel_title, genre, target_word_count, current_stage
 
-# 阶段一：创作层
+# 创作层
 concept, outline, volume_outline, characters
-chapters, chapter_status
-current_chapter, review_round, max_review_rounds
-reviews, proofread_records
+chapters, chapter_status, current_chapter, review_round
+reviews, structured_reviews, proofread_results, proofread_records
+proofread_scope, proofread_context
 
-# 阶段二：萃取层（预留）
-knowledge_base
+# 萃取层
+knowledge_base, chapter_analyses
 
-# 阶段三：IP 生成层（预留）
-character_ips, visual_assets
+# IP 层
+character_ips, visual_assets, story_bible
+
+# 兼容容器（仅存非章节辅助数据）
+creation: {chapter_outlines, chapter_summaries, extraction_notes}
 
 # 控制字段
 error_message, human_feedback, should_pause
-```
-
-## 启动链路
-
-```
-deploy.sh
-   │
-   ├─► 读取 ~/.storyforge/storyforge.yaml（通过临时 Python 进程）
-   │
-   ├─► 安装 Python 依赖 + 构建前端
-   │
-   └─► gunicorn -w 2 -b host:port backend.app:app --daemon
-                         │
-                         ▼
-                  backend/app.py
-                         │
-                         ├─► get_config()           ← core/config.py
-                         ├─► storage.list_novels()  ← backend/storage.py（从 ~/.storyforge/data/ 读取）
-                         └─► serve client/build/    ← React 静态资源
 ```
 
 ## 相关文档
 
 - [Agent 系统设计](agent-system.md)
 - [Pipeline 流程详解](pipeline.md)
-- [Web API 参考](api-reference.md)
-- [配置系统说明](config.md)
+- [API 参考](api-reference.md)
+- [配置说明](config.md)

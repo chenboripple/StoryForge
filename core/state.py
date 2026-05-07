@@ -63,6 +63,28 @@ class CharacterInfo:
     classic_lines: List[str] = field(default_factory=list)
 
 
+@dataclass
+class AgentMessageState:
+    """Agent 间消息（用于持久化）"""
+    sender: str
+    msg_type: str
+    content: str
+    target: Optional[str] = None
+    chapter: Optional[int] = None
+    timestamp: str = ""
+    priority: str = "normal"
+
+
+@dataclass
+class RoutingSuggestion:
+    """Agent 路由建议"""
+    suggested_by: str
+    suggested_node: str
+    reason: str
+    confidence: float = 0.8
+    timestamp: str = ""
+
+
 DEFAULT_SETTINGS = get_settings()
 
 
@@ -110,6 +132,10 @@ class NovelState:
 
     # 兼容容器（仅用于存储非章节类辅助数据，不再与 chapters 双向绑定）
     creation: Dict[str, Any] = field(default_factory=dict)
+
+    # Agent 间消息与路由（multi-agent 通讯）
+    agent_messages: List[Dict] = field(default_factory=list)  # MessageBus 消息日志
+    routing_suggestions: List[Dict] = field(default_factory=list)  # Agent 路由建议
 
     # 控制字段
     error_message: str = ""
@@ -205,6 +231,59 @@ class NovelState:
 
         return cls(**filtered)
 
+    def get_agent_messages(
+        self,
+        msg_type: Optional[str] = None,
+        chapter: Optional[int] = None,
+        target: Optional[str] = None,
+        limit: int = 10
+    ) -> List[Dict]:
+        """获取 Agent 间消息（按条件过滤）"""
+        result = self.agent_messages
+        if msg_type:
+            result = [m for m in result if m.get("msg_type") == msg_type]
+        if chapter is not None:
+            result = [m for m in result if m.get("chapter") == chapter]
+        if target:
+            result = [m for m in result if m.get("target") == target or m.get("target") is None]
+        return result[-limit:]
+
+    def get_routing_suggestions(self, chapter: Optional[int] = None) -> List[Dict]:
+        """获取 Agent 路由建议"""
+        if chapter is not None:
+            return [r for r in self.routing_suggestions if r.get("chapter") == chapter]
+        return self.routing_suggestions
+
+    def add_agent_message(self, sender: str, msg_type: str, content: str,
+                          target: Optional[str] = None,
+                          chapter: Optional[int] = None,
+                          priority: str = "normal"):
+        """添加 Agent 消息"""
+        from datetime import datetime
+        self.agent_messages.append({
+            "sender": sender,
+            "msg_type": msg_type,
+            "content": content,
+            "target": target,
+            "chapter": chapter,
+            "timestamp": datetime.now().isoformat(),
+            "priority": priority
+        })
+
+    def add_routing_suggestion(self, suggested_by: str, suggested_node: str,
+                               reason: str, confidence: float = 0.8,
+                               chapter: Optional[int] = None):
+        """添加路由建议"""
+        from datetime import datetime
+        self.routing_suggestions.append({
+            "suggested_by": suggested_by,
+            "suggested_node": suggested_node,
+            "reason": reason,
+            "confidence": confidence,
+            "chapter": chapter,
+            "timestamp": datetime.now().isoformat()
+        })
+
     def to_dict(self) -> dict:
         """序列化为字典（JSON 友好），用于存储与 API 输出"""
         return {
@@ -271,6 +350,9 @@ class NovelState:
             "knowledge_base": self.knowledge_base,
             "character_ips": self.character_ips,
             "visual_assets": self.visual_assets,
+            # Agent 间消息与路由
+            "agent_messages": self.agent_messages,
+            "routing_suggestions": self.routing_suggestions,
             # 控制
             "error_message": self.error_message,
             "human_feedback": self.human_feedback,

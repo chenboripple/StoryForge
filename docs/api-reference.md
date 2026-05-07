@@ -1,179 +1,165 @@
 # API 参考
 
-## Core
+## Core (core/)
 
-### `AgentPersona`
+### `core/agent.py`
 
-角色人设定义，所有字段自动注入 LLM 系统提示词。
+#### AgentMessage
+
+```python
+@dataclass
+class AgentMessage:
+    sender: str
+    msg_type: str          # "issue" / "suggestion" / "info" / "warning"
+    content: str
+    target: Optional[str]  # None 表示广播
+    chapter: Optional[int]
+    timestamp: str
+    priority: str          # "low" / "normal" / "high" / "urgent"
+```
+
+#### MessageBus
+
+```python
+class MessageBus:
+    def publish(self, message: AgentMessage)
+    def subscribe(self, agent_name: Optional[str], callback: Callable)
+    def subscribe_by_type(self, msg_type: str, callback: Callable)
+    def get_messages(
+        self,
+        agent: Optional[str] = None,
+        msg_type: Optional[str] = None,
+        chapter: Optional[int] = None,
+        since: Optional[str] = None
+    ) -> List[AgentMessage]
+    def get_unread_for_agent(self, agent_name: str) -> List[AgentMessage]
+    def to_dict(self) -> List[Dict]
+    @classmethod
+    def from_dict(cls, data: List[Dict]) -> MessageBus
+```
+
+#### AgentPersona
 
 ```python
 @dataclass
 class AgentPersona:
-    name: str                # 名字（如 "墨川"）
-    role: str                # 角色（如 "职业小说家"）
-    goal: str                # 核心目标
-    backstory: str = ""      # 背景故事（影响语气与知识倾向）
-    expertise: List[str]     # 专业领域（影响任务分配）
-    tone: str                # 语气风格（影响输出调性）
-    principles: List[str]    # 工作原则（影响决策逻辑）
-    constraints: List[str]   # 限制条件（影响输出边界）
+    name: str
+    role: str
+    goal: str
+    backstory: str = ""
+    expertise: List[str] = field(default_factory=list)
+    tone: str = "专业、客观"
+    principles: List[str] = field(default_factory=list)
+    constraints: List[str] = field(default_factory=list)
+
+    def system_prompt(self) -> str
 ```
 
-**方法**
-
-- `system_prompt() -> str`
-  - 生成完整的系统提示词，自动组合所有字段
-
----
-
-### `BaseAgent`
-
-所有具体 Agent 的抽象基类。
+#### BaseAgent
 
 ```python
 class BaseAgent(ABC):
-    def __init__(self, persona: AgentPersona, llm_client: Optional[Callable] = None)
-```
-
-**方法**
-
-- `invoke(state: NovelState) -> NovelState` *(抽象)*
-  - 执行 Agent 任务，必须子类实现
-
-- `call_llm(task, context="", temperature=None, extra_system_prompt="") -> str`
-  - 调用 LLM，自动注入 `persona.system_prompt()`
-  - `extra_system_prompt`：追加额外系统提示，**不修改 persona 对象**（线程安全）
-
-- `add_callback(callback: Callable[[str, dict], None])`
-  - 注册回调钩子，事件类型见 [pipeline.md](pipeline.md)
-
----
-
-### `Task`
-
-CrewAI 风格的任务定义，将"做什么"与"怎么做"分离。
-
-```python
-class Task:
     def __init__(
         self,
-        description: str,           # 任务描述
-        expected_output: str,       # 期望输出
-        agent: Optional[BaseAgent] = None,
-        context_tasks: Optional[List[str]] = None
+        persona: AgentPersona,
+        llm_client: Optional[Callable] = None,
+        memory: Optional[StoryMemory] = None,
+        error_handler: Optional[ErrorHandler] = None,
+        use_json_mode: bool = False,
+        message_bus: Optional[MessageBus] = None
+    ):
+        # ...
+
+    @abstractmethod
+    def invoke(self, state: Any) -> Any
+
+    def _call_llm(
+        self,
+        task: str,
+        context: str = "",
+        temperature: Optional[float] = None,
+        json_schema: Optional[str] = None,
+        max_retries: int = 2
+    ) -> Union[str, Dict]
+
+    def _call_llm_raw(
+        self,
+        prompt: str,
+        json_mode: bool = False,
+        task: str = "",
+        temperature: Optional[float] = None,
+        max_retries: int = 2
+    ) -> Union[str, Dict]
+
+    def publish_message(
+        self,
+        msg_type: str,
+        content: str,
+        target: Optional[str] = None,
+        chapter: Optional[int] = None,
+        priority: str = "normal"
     )
+
+    def get_messages_from_bus(
+        self,
+        msg_type: Optional[str] = None,
+        chapter: Optional[int] = None
+    ) -> List[AgentMessage]
+
+    def add_callback(self, callback: Callable)
+    def _notify(self, event: str, data: dict)
 ```
 
-**方法**
+### `core/state.py`
 
-- `execute(state, extra_system_prompt="") -> str`
-  - 调用关联 Agent 的 `call_llm` 执行任务
-
----
-
-### `NovelState`
-
-贯穿整个 Pipeline 的全局状态对象。
-
-```python
-@dataclass
-class NovelState:
-    # 元数据
-    novel_id: str = ""
-    novel_title: str = ""
-    genre: str = ""
-    target_word_count: int = 3000
-    current_stage: PipelineStage = PipelineStage.CREATION
-
-    # 创作层
-    concept: str = ""
-    outline: str = ""
-    volume_outline: Dict[int, str]
-    characters: List[CharacterInfo]
-    chapters: Dict[int, str]              # 章节号 → 内容
-    chapter_status: Dict[int, ChapterStatus]
-    current_chapter: int = 1
-    review_round: int = 0
-    max_review_rounds: int = 3
-    reviews: Dict[int, List[ReviewRecord]]          # 章节 → 审稿记录列表
-    proofread_records: Dict[int, List[ProofreadRecord]]  # 章节 → 校对记录列表
-
-    # 萃取层（预留）
-    knowledge_base: Dict[str, Any]
-
-    # IP 生成层（预留）
-    character_ips: Dict[str, Dict]
-    visual_assets: Dict[str, List[Dict]]
-
-    # 控制字段
-    error_message: str = ""
-    human_feedback: Optional[str] = None
-    should_pause: bool = False
-```
-
-**方法**
-
-- `get_current_chapter_status() -> ChapterStatus`
-- `get_latest_review() -> Optional[ReviewRecord]` — 当前章节最新审稿记录
-- `can_continue_review() -> bool` — 是否未超最大轮次
-- `to_context_string() -> str` — 生成供 Agent 使用的上下文字符串
-- `copy() -> NovelState` — 深拷贝，用于批量创作隔离状态
-- `to_dict() -> dict` — **序列化为 JSON 友好的字典**（用于 storage 与 API 输出）
-- `to_index_entry() -> dict` — **生成轻量索引条目**（用于清单页）
-- `from_dict(data: dict) -> NovelState` *(classmethod)* — 安全构造，自动反序列化嵌套对象（角色、状态枚举、审稿记录等）
-
----
-
-### 辅助类
-
-#### `ChapterStatus`
+#### ChapterStatus (Enum)
 
 ```python
 class ChapterStatus(Enum):
-    PENDING = "pending"           # 待写作
-    DRAFT = "draft"               # 初稿完成
-    IN_REVIEW = "in_review"       # 审稿中
-    REVISING = "revising"         # 修改中
-    PROOFREADING = "proofreading" # 校对中
-    APPROVED = "approved"         # 已通过
-    REJECTED = "rejected"         # 被驳回
+    PENDING = "pending"
+    DRAFT = "draft"
+    IN_REVIEW = "in_review"
+    REVISING = "revising"
+    PROOFREADING = "proofreading"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 ```
 
-#### `PipelineStage`
+#### PipelineStage (Enum)
 
 ```python
 class PipelineStage(Enum):
-    CREATION = "creation"         # 创作层
-    EXTRACTION = "extraction"     # 萃取层
-    IP_GENERATION = "ip_generation"  # IP 生成层
+    CREATION = "creation"
+    EXTRACTION = "extraction"
+    IP_GENERATION = "ip_generation"
 ```
 
-#### `ReviewRecord`
+#### ReviewRecord
 
 ```python
 @dataclass
 class ReviewRecord:
-    round: int                  # 审稿轮次
-    reviewer: str               # 审稿人
-    score: int                  # 0-100
-    comments: str               # 完整审稿意见
-    passed: bool                # 是否通过
-    timestamp: Optional[str]
+    round: int
+    reviewer: str
+    score: int
+    comments: str
+    passed: bool
+    timestamp: str = ""
 ```
 
-#### `ProofreadRecord`
+#### ProofreadRecord
 
 ```python
 @dataclass
 class ProofreadRecord:
-    round: int                  # 校对轮次
-    proofreader: str            # 校对人
-    comments: str               # 校对意见
-    passed: bool                # 是否通过
-    timestamp: Optional[str]
+    round: int
+    proofreader: str
+    comments: str
+    passed: bool
+    timestamp: str = ""
 ```
 
-#### `CharacterInfo`
+#### CharacterInfo
 
 ```python
 @dataclass
@@ -183,66 +169,267 @@ class CharacterInfo:
     appearance: str = ""
     personality: str = ""
     background: str = ""
-    goals: List[str]
-    relationships: Dict[str, str]
-    classic_lines: List[str]
+    goals: List[str] = field(default_factory=list)
+    relationships: Dict[str, str] = field(default_factory=dict)
+    classic_lines: List[str] = field(default_factory=list)
 ```
 
----
-
-## Config（配置系统）
-
-### `get_config()` / `load_config()`
-
-加载并缓存全局配置。详细字段说明见 [config.md](config.md)。
-
-```python
-from core.config import get_config, load_config, reset_config
-
-# 加载（带缓存）
-config = get_config()
-
-# 强制重新加载
-config = get_config(reload=True)
-
-# 显式指定路径
-config = load_config("/path/to/custom.yaml")
-
-# 清空缓存
-reset_config()
-```
-
-### `StoryForgeConfig`
+#### NovelState
 
 ```python
 @dataclass
-class StoryForgeConfig:
-    llm: LLMConfig
-    storage: StorageConfig
-    server: ServerConfig
-    pipeline: PipelineConfig
-    config_path: Optional[str]    # 加载来源（None 表示使用默认值）
+class NovelState:
+    # 元数据
+    novel_id: str = ""
+    novel_title: str = ""
+    genre: str = ""
+    target_word_count: int = DEFAULT_SETTINGS.pipeline.default_target_word_count
+    current_stage: PipelineStage = PipelineStage.CREATION
 
-    @property
-    def data_dir_abs(self) -> str  # data_dir 的绝对路径
+    # 创作层
+    concept: str = ""
+    outline: str = ""
+    volume_outline: Dict[int, str] = field(default_factory=dict)
+    characters: List[CharacterInfo] = field(default_factory=list)
+    chapters: Dict[int, Any] = field(default_factory=dict)
+    chapter_status: Dict[int, ChapterStatus] = field(default_factory=dict)
+    current_chapter: int = 1
+    review_round: int = 0
+    max_review_rounds: int = 3
+    reviews: Dict[int, List[Any]] = field(default_factory=dict)
+    structured_reviews: Dict[int, List[Any]] = field(default_factory=dict)
+    proofread_results: Dict[int, List[Any]] = field(default_factory=dict)
+    proofread_records: Dict[int, List[Any]] = field(default_factory=dict)
+    proofread_scope: str = "chapter"
+    proofread_context: Dict[str, Any] = field(default_factory=dict)
+
+    # 萃取层
+    knowledge_base: Dict[str, Any] = field(default_factory=dict)
+    chapter_analyses: Dict[int, Any] = field(default_factory=dict)
+
+    # IP 层
+    character_ips: Dict[str, Dict] = field(default_factory=dict)
+    visual_assets: Dict[str, List[Dict]] = field(default_factory=dict)
+    story_bible: Optional[Any] = None
+
+    # 兼容容器
+    creation: Dict[str, Any] = field(default_factory=dict)
+
+    # 控制字段
+    error_message: str = ""
+    human_feedback: Optional[str] = None
+    should_pause: bool = False
+
+    def get_current_chapter_status(self) -> ChapterStatus
+    def get_latest_review(self) -> Optional[Any]
+    def can_continue_review(self) -> bool
+    def to_context_string(self) -> str
+    def copy(self) -> NovelState
+    def to_dict(self) -> dict
+    def to_index_entry(self) -> dict
+    @classmethod
+    def from_dict(cls, data: dict) -> NovelState
 ```
 
-### 子配置
+### `core/schema.py`
+
+#### ReviewVerdict (Enum)
+
+```python
+class ReviewVerdict(Enum):
+    PASS = "pass"
+    REVISE = "revise"
+    REWRITE = "rewrite"
+```
+
+#### DimensionScore
+
+```python
+@dataclass
+class DimensionScore:
+    name: str
+    score: int
+    comment: str
+```
+
+#### ReviewIssue
+
+```python
+@dataclass
+class ReviewIssue:
+    severity: str          # "S" / "A" / "B" / "C"
+    location: str
+    description: str
+    suggestion: str
+```
+
+#### ReviewResult
+
+```python
+@dataclass
+class ReviewResult:
+    total_score: int
+    dimensions: List[DimensionScore]
+    issues: List[ReviewIssue]
+    verdict: ReviewVerdict
+    summary: str
+    ai_flavor_score: int = 5
+    ai_flavor_level: str = "medium"
+```
+
+#### ProofreadIssue
+
+```python
+@dataclass
+class ProofreadIssue:
+    level: str             # "error" / "warning" / "suggestion"
+    category: str          # "typo" / "consistency" / "timeline" / ...
+    location: str
+    description: str
+    fix: str = ""
+```
+
+#### ProofreadResult
+
+```python
+@dataclass
+class ProofreadResult:
+    passed: bool
+    issues: List[ProofreadIssue]
+    summary: str
+    verdict: str = "需返修"  # "可发布" / "可交付" / "需返修"
+```
+
+#### ChapterContent
+
+```python
+@dataclass
+class ChapterContent:
+    text: str
+    version: int = 1
+    word_count: int = 0
+    generated_at: str = ""
+    modified_at: str = ""
+```
+
+#### JSON Schema 提示词
+
+```python
+REVIEW_JSON_PROMPT     # ReviewResult 的 JSON Schema
+PROOFREAD_JSON_PROMPT  # ProofreadResult 的 JSON Schema
+```
+
+### `core/memory.py`
+
+#### StoryEvent
+
+```python
+@dataclass
+class StoryEvent:
+    chapter: int
+    description: str
+    characters: List[str]
+    timestamp: str = ""
+```
+
+#### CharacterArc
+
+```python
+@dataclass
+class CharacterArc:
+    name: str
+    current_state: str
+    changes: List[str]
+```
+
+#### WorldState
+
+```python
+@dataclass
+class WorldState:
+    location: str
+    time: str
+    rules: Dict[str, str]
+```
+
+#### Inconsistency
+
+```python
+@dataclass
+class Inconsistency:
+    severity: str          # "error" / "warning"
+    description: str
+    location: str = ""
+```
+
+#### StoryMemory
+
+```python
+class StoryMemory:
+    def __init__(self)
+    def initialize_from_outline(
+        self,
+        characters: List[CharacterInfo],
+        world_setting: Optional[str] = None
+    )
+    def add_event(self, event: StoryEvent)
+    def update_character(self, arc: CharacterArc)
+    def update_world(self, state: WorldState)
+    def check_consistency(self, chapter: int, text: str) -> List[Inconsistency]
+    def build_context_for_chapter(self, chapter: int) -> str
+```
+
+### `core/prompt_assembler.py`
+
+#### PromptAssembler
+
+```python
+class PromptAssembler:
+    def assemble_writer_prompt(
+        self,
+        persona: AgentPersona,
+        chapter_plan: Optional[Any],
+        context: str,
+        memory_context: str = "",
+        humanization: bool = True
+    ) -> str
+
+    def assemble_reviewer_prompt(
+        self,
+        persona: AgentPersona,
+        chapter_content: str,
+        chapter_plan: Optional[Any],
+        characters: List[CharacterInfo],
+        previous_chapter: str = ""
+    ) -> str
+
+    def assemble_proofreader_prompt(
+        self,
+        persona: AgentPersona,
+        chapter_content: str,
+        characters: List[CharacterInfo],
+        world_setting: Optional[str] = None,
+        scope: str = "chapter",
+        project_docs: Optional[Dict[str, Any]] = None
+    ) -> str
+```
+
+### `core/config.py` (YAML 配置 - backend 用)
 
 ```python
 @dataclass
 class LLMConfig:
-    provider: str = "mock"       # mock | openai | anthropic
+    provider: str = "mock"
     model: str = "gpt-4o-mini"
     api_key: str = ""
     base_url: str = ""
     temperature: float = 0.7
     timeout: int = 60
-    extra: Dict[str, Any]
+    extra: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class StorageConfig:
-    data_dir: str = "./data"
+    data_dir: str = "~/.storyforge/data"
 
 @dataclass
 class ServerConfig:
@@ -254,180 +441,232 @@ class ServerConfig:
 class PipelineConfig:
     max_review_rounds: int = 3
     default_target_word_count: int = 3000
+
+@dataclass
+class StoryForgeConfig:
+    llm: LLMConfig
+    storage: StorageConfig
+    server: ServerConfig
+    pipeline: PipelineConfig
+    config_path: Optional[str] = None
+
+    @property
+    def data_dir_abs(self) -> str
+
+# 加载函数
+def load_config(path: Optional[str] = None) -> StoryForgeConfig
+def get_config(reload: bool = False) -> StoryForgeConfig
+def reset_config() -> None
 ```
 
----
-
-## LLM Factory
-
-### `create_llm_client(cfg: Optional[LLMConfig] = None) -> Callable`
-
-根据配置创建 LLM 客户端。
+### `core/settings.py` (JSON 配置 - web_console 用)
 
 ```python
-from core.config import get_config
-from core.llm_factory import create_llm_client
+@dataclass(frozen=True)
+class ConsoleSettings:
+    max_running_tasks: int
+    default_command: str
+    template_file: Path
 
-config = get_config()
-llm = create_llm_client(config.llm)
+@dataclass(frozen=True)
+class DebugSettings:
+    output_dir: Path
 
-# 调用
-result = llm("请创作一段...", temperature=0.8)
+@dataclass(frozen=True)
+class PipelineSettings:
+    default_target_word_count: int
+
+@dataclass(frozen=True)
+class StoryForgeSettings:
+    project_root: Path
+    config_file: Path
+    console: ConsoleSettings
+    debug: DebugSettings
+    pipeline: PipelineSettings
+
+# 加载函数
+@lru_cache(maxsize=1)
+def get_settings() -> StoryForgeSettings
+def get_settings_with_sources() -> Tuple[StoryForgeSettings, Dict[str, str]]
 ```
 
-**返回值签名**
+## Agents (agents/)
 
-```python
-def llm(prompt: str, temperature: Optional[float] = None) -> str
-```
-
-**支持的 provider**
-
-| provider | 说明 | 依赖 |
-|----------|------|------|
-| `mock` | 内置占位响应 | 无 |
-| `openai` | OpenAI / OpenAI 兼容协议 | `pip install openai` |
-| `anthropic` | Anthropic Claude | `pip install anthropic` |
-
----
-
-## Agents
-
-### `WriterAgent`
+### `agents/creation_agents.py`
 
 ```python
 class WriterAgent(BaseAgent):
-    def __init__(self, llm_client=None)
-    def invoke(self, state: NovelState) -> NovelState
-```
+    def __init__(
+        self,
+        llm_client=None,
+        memory: StoryMemory = None,
+        error_handler=None,
+        prompt_assembler: PromptAssembler = None
+    )
+    def invoke(self, state) -> NovelState
 
-- 使用 `MochuanPersona`（墨川）
-- 上下文包含：小说信息、大纲前500字、前5个角色、最近两章结尾200字
-- 输出：完整章节正文（不含标题和章节号）
-- 副作用：`chapters[current_chapter]` 写入内容，`chapter_status` → `DRAFT`，`review_round` 重置为 0
-
-### `ReviewerAgent`
-
-```python
 class ReviewerAgent(BaseAgent):
-    def __init__(self, llm_client=None)
-    def invoke(self, state: NovelState) -> NovelState
-```
+    def __init__(
+        self,
+        llm_client=None,
+        memory: StoryMemory = None,
+        error_handler=None,
+        prompt_assembler: PromptAssembler = None
+    )
+    def invoke(self, state) -> NovelState
 
-- 使用 `QingfengPersona`（青锋）
-- 上下文包含：小说信息、角色设定、本章前1500字、历史审稿记录
-- 输出解析：提取总体评分（多重正则匹配 + 兜底），判断是否通过（≥85分且显式标注"通过"）
-- 副作用：`reviews[current_chapter]` 追加 `ReviewRecord`，`chapter_status` 更新，`review_round += 1`
-
-### `ReviserAgent`
-
-```python
 class ReviserAgent(BaseAgent):
-    def __init__(self, llm_client=None)
-    def invoke(self, state: NovelState) -> NovelState
-```
+    def __init__(
+        self,
+        llm_client=None,
+        memory: StoryMemory = None,
+        error_handler=None,
+        prompt_assembler: PromptAssembler = None
+    )
+    def invoke(self, state) -> NovelState
 
-- 使用 `MochuanPersona`，通过 `extra_system_prompt` 临时追加"当前任务是根据编辑意见修改"提示
-- 上下文包含：当前章节完整内容、最新审稿意见、已修改轮次
-- 输出：完整的修改后章节正文
-- 副作用：`chapters[current_chapter]` 更新内容，`chapter_status` → `REVISING`
-
-### `ProofreaderAgent`
-
-```python
 class ProofreaderAgent(BaseAgent):
-    def __init__(self, llm_client=None)
-    def invoke(self, state: NovelState) -> NovelState
+    def __init__(
+        self,
+        llm_client=None,
+        memory: StoryMemory = None,
+        error_handler=None,
+        prompt_assembler: PromptAssembler = None
+    )
+    def invoke(self, state) -> NovelState
+
+# 预定义人设
+MochuanPersona()     # 墨川 - 作家
+QingfengPersona()   # 青锋 - 编辑
+YanqingPersona()    # 砚清 - 校对
 ```
 
-- 使用 `YanqingPersona`（砚清）
-- 上下文包含：章节完整内容、角色名单（用于一致性检查）
-- 输出解析：检查 `【总体评价】通过` 或精确匹配 `"通过"`
-- 副作用：`proofread_records[current_chapter]` 追加 `ProofreadRecord`（与 `reviews` 字段分离），`chapter_status` 更新
+## Pipeline (pipeline/)
 
----
-
-## Pipeline
-
-### `NovelPipeline`
+### `pipeline/novel_pipeline.py`
 
 ```python
 class NovelPipeline:
-    def __init__(self, llm_client: Callable = None)
+    def __init__(
+        self,
+        llm_client: Callable = None,
+        use_memory: bool = True,
+        use_outline_refinement: bool = True,
+        use_extraction: bool = True,
+        use_ip_generation: bool = True,
+        checkpoint_dir: Optional[str] = None,
+        ip_output_dir: str = "./ip_assets"
+    )
     def run(self, initial_state: NovelState) -> NovelState
     def run_batch(self, state: NovelState, chapters: list) -> Dict[int, NovelState]
+    def resume(self, novel_id: str, chapter: int, from_node: Optional[str] = None) -> NovelState
+    def load_checkpoint(self, novel_id: str, chapter: int) -> Optional[NovelState]
+    def list_checkpoints(self, novel_id: Optional[str] = None) -> list
     def visualize(self) -> str
+
+def create_pipeline(
+    llm_client: Callable = None,
+    use_memory: bool = True,
+    use_outline_refinement: bool = True
+) -> NovelPipeline
 ```
 
-### `create_pipeline`
+## Stages (stages/)
+
+### `stages/outline/outline_generator.py`
 
 ```python
-def create_pipeline(llm_client: Callable = None) -> NovelPipeline
+class OutlineGenerator:
+    def __init__(self, llm_client=None)
+    def generate_chapter_outline(
+        self,
+        novel_title: str,
+        volume_outline: str,
+        current_chapter: int,
+        characters: List[CharacterInfo],
+        target_words: int
+    ) -> Dict[str, Any]
 ```
 
-工厂函数，创建预配置好的 Pipeline 实例。
-
-**LLM Client 签名**
+### `stages/extraction/knowledge_extractor.py`
 
 ```python
-def llm_client(prompt: str, temperature: Optional[float] = None) -> str:
-    """
-    prompt: 完整 prompt（已包含 system_prompt + context + task）
-    temperature: 可选温度覆盖
-    return: LLM 生成的文本
-    """
+@dataclass
+class ChapterAnalysis:
+    chapter: int
+    events: List[StoryEvent]
+    new_characters: List[str]
+    new_foreshadowing: List[str]
+    summary: str
+
+class KnowledgeExtractor:
+    def __init__(self, llm_client=None, memory=None)
+    def extract(self, chapter: int, chapter_content: str) -> ChapterAnalysis
 ```
 
----
+### `stages/ip_generation/ip_generator.py`
 
-## Storage（存储层）
+```python
+@dataclass
+class StoryBible:
+    title: str
+    characters: List[Dict[str, Any]]
+    key_scenes: List[Dict[str, Any]]
+    world_setting: Dict[str, Any]
+    timeline: List[str]
+    derived_settings: List[Dict[str, Any]]
 
-### `backend.storage`
+class IPGenerator:
+    def __init__(self, llm_client=None, output_dir="./ip_assets")
+    def generate(
+        self,
+        title: str,
+        chapters: Dict[int, str],
+        chapter_analyses: Optional[Dict[int, ChapterAnalysis]] = None
+    ) -> StoryBible
+```
+
+## Storage (backend/)
+
+### `backend/storage.py`
 
 JSON 文件存储层，存储位置由 `config.storage.data_dir` 决定。
 
-**目录结构**
-
+**目录结构**：
 ```
-<data_dir>/
+{data_dir}/
 ├── index.json         # 小说清单索引
 └── novels/
-    └── <novel_id>.json  # 单个小说完整状态
+    └── {novel_id}.json  # 单个小说完整状态
 ```
 
-### 函数
+**函数**：
 
 ```python
 from backend import storage
 
-# 保存
+# 保存小说（同时更新索引）
 storage.save_novel(state: NovelState) -> None
 
-# 加载
+# 加载单个小说
 storage.load_novel(novel_id: str) -> Optional[NovelState]
 
-# 列出（来自 index.json）
+# 列出所有小说（从 index.json）
 storage.list_novels() -> List[dict]
 
-# 仅更新索引
+# 仅更新索引（不保存小说）
 storage.update_novel_index(state: NovelState) -> None
 
-# 删除
+# 删除小说（同时更新索引）
 storage.delete_novel(novel_id: str) -> bool
 
 # 重建索引（扫描 novels/ 目录）
 storage.rebuild_index() -> int
 ```
 
----
+### `backend/app.py` (Flask API)
 
-## HTTP API（Web 后端）
-
-详见 [Web API 端点](#web-api-端点)。
-
-### Web API 端点
-
-后端通过 Flask 提供，由 `backend/app.py` 定义。
+后端通过 Flask 提供 API，默认端口 5089。
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
@@ -441,13 +680,12 @@ storage.rebuild_index() -> int
 
 返回服务健康状态及当前配置摘要。
 
-**响应**
-
+**响应**：
 ```json
 {
-  "status": "ok",
-  "config_path": "/path/to/.storyforge/storyforge.yaml",
-  "data_dir": "/path/to/data"
+    "status": "ok",
+    "config_path": "/path/to/.storyforge/storyforge.yaml",
+    "data_dir": "/path/to/data"
 }
 ```
 
@@ -455,21 +693,20 @@ storage.rebuild_index() -> int
 
 返回小说清单（轻量索引）。
 
-**响应**
-
+**响应**：
 ```json
 [
-  {
-    "novel_id": "demo_001",
-    "novel_title": "熵塔",
-    "genre": "科幻末日",
-    "concept": "末日后的世界...",
-    "current_stage": "creation",
-    "current_chapter": 1,
-    "total_chapters": 1,
-    "approved_chapters": 1,
-    "character_count": 2
-  }
+    {
+        "novel_id": "demo_001",
+        "novel_title": "熵塔",
+        "genre": "科幻末日",
+        "concept": "末日后的世界...",
+        "current_stage": "creation",
+        "current_chapter": 1,
+        "total_chapters": 1,
+        "approved_chapters": 1,
+        "character_count": 2
+    }
 ]
 ```
 
@@ -479,8 +716,7 @@ storage.rebuild_index() -> int
 
 **响应**：完整 `NovelState` JSON
 
-**错误**
-
+**错误**：
 | 状态码 | 含义 |
 |--------|------|
 | 404 | 小说不存在 |
@@ -489,23 +725,22 @@ storage.rebuild_index() -> int
 
 返回章节列表（带状态、字数和最新审稿分数）。
 
-**响应**
-
+**响应**：
 ```json
 {
-  "novel_id": "demo_001",
-  "current_chapter": 1,
-  "chapters": [
-    {
-      "chapter_num": 1,
-      "status": "approved",
-      "word_count": 601,
-      "preview": "林晚站在观测塔的废墟上...",
-      "review_rounds": 2,
-      "latest_score": 88,
-      "latest_passed": true
-    }
-  ]
+    "novel_id": "demo_001",
+    "current_chapter": 1,
+    "chapters": [
+        {
+            "chapter_num": 1,
+            "status": "approved",
+            "word_count": 601,
+            "preview": "林晚站在观测塔的废墟上...",
+            "review_rounds": 2,
+            "latest_score": 88,
+            "latest_passed": true
+        }
+    ]
 }
 ```
 
@@ -513,39 +748,58 @@ storage.rebuild_index() -> int
 
 返回章节正文 + 完整审稿/校对记录。
 
-**响应**
-
+**响应**：
 ```json
 {
-  "novel_id": "demo_001",
-  "chapter_num": 1,
-  "status": "approved",
-  "content": "（章节正文）",
-  "word_count": 601,
-  "reviews": [
-    {
-      "round": 1,
-      "reviewer": "青锋",
-      "score": 78,
-      "comments": "...",
-      "passed": false,
-      "timestamp": "2026-05-05T10:12:00"
-    }
-  ],
-  "proofread_records": [
-    {
-      "round": 1,
-      "proofreader": "砚清",
-      "comments": "...",
-      "passed": true,
-      "timestamp": "2026-05-05T12:05:00"
-    }
-  ]
+    "novel_id": "demo_001",
+    "chapter_num": 1,
+    "status": "approved",
+    "content": "（章节正文）",
+    "word_count": 601,
+    "reviews": [
+        {
+            "round": 1,
+            "reviewer": "青锋",
+            "score": 78,
+            "comments": "...",
+            "passed": false,
+            "timestamp": "2026-05-05T10:12:00"
+        }
+    ],
+    "proofread_records": [
+        {
+            "round": 1,
+            "proofreader": "砚清",
+            "comments": "...",
+            "passed": true,
+            "timestamp": "2026-05-05T12:05:00"
+        }
+    ]
 }
 ```
 
-**错误**
-
+**错误**：
 | 状态码 | 含义 |
 |--------|------|
 | 404 | 小说或章节不存在 |
+
+## web_console (FastAPI)
+
+### `web_console/app.py`
+
+FastAPI 操作界面，默认端口 8787。
+
+功能：
+- 启动任务
+- 查看状态
+- 查看日志
+- 停止任务
+- 模板保存
+- 并发上限控制
+- 日志下载
+- 人物 IP 操作区（手动触发）
+
+启动命令：
+```bash
+uvicorn web_console.app:app --reload --port 8787
+```

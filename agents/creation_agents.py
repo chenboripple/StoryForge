@@ -131,33 +131,46 @@ def _extract_json(text):
 
 class WriterAgent(BaseAgent):
     """墨川 - 写作节点（支持大纲细化和人味化）"""
-    
+
     def __init__(
         self,
         llm_client=None,
         memory: StoryMemory = None,
         error_handler=None,
-        prompt_assembler: PromptAssembler = None
+        prompt_assembler: PromptAssembler = None,
+        message_bus=None,
+        state=None
     ):
         super().__init__(
             persona=MochuanPersona(),
             llm_client=llm_client,
             memory=memory,
             error_handler=error_handler,
-            use_json_mode=False
+            use_json_mode=False,
+            message_bus=message_bus,
+            state=state
         )
         self.prompt_assembler = prompt_assembler or PromptAssembler()
     
     def invoke(self, state):
         """写作章节"""
-        
+        # 绑定 state 到 self（用于消息持久化）
+        self.state = state
+        self._current_chapter = state.current_chapter
+
+        # 0. 检查其他 Agent 的反馈消息（如：审稿建议、校对提醒等）
+        agent_messages = self._get_messages_context(state)
+        if agent_messages:
+            line_count = len(agent_messages.split('\n')) - 1
+            print(f"  📨 [墨川] 收到 {line_count} 条其他 Agent 的消息")
+
         # 1. 获取章节计划
         chapter_plan = self._get_chapter_plan(state)
-        
+
         # 2. 构建上下文
         context = self._build_writer_context(state)
         memory_context = self._build_memory_context(state)
-        
+
         # 3. 使用 PromptAssembler 组装 prompt
         prompt = self.prompt_assembler.assemble_writer_prompt(
             persona=self.persona,
@@ -166,17 +179,25 @@ class WriterAgent(BaseAgent):
             memory_context=memory_context,
             humanization=True
         )
-        
+
         # 4. 调用 LLM
         chapter_text = self._call_llm_raw(prompt)
-        
+
         # 5. 一致性检查
         if self.memory:
             issues = self.memory.check_consistency(state.current_chapter, chapter_text)
             for issue in issues:
                 if issue.severity == "error":
                     print(f"⚠️ 发现严重不一致：{issue.description}")
-        
+                    # 发布消息提醒其他 Agent
+                    self.publish_message(
+                        msg_type="warning",
+                        content=f"写作时检测到严重不一致：{issue.description}，建议审稿时重点检查",
+                        target="青锋",
+                        chapter=state.current_chapter,
+                        priority="high"
+                    )
+
         # 6. 更新状态
         from core.state import ChapterStatus
         chapter_content = ChapterContent(
@@ -186,18 +207,45 @@ class WriterAgent(BaseAgent):
             generated_at=datetime.now().isoformat(),
             modified_at=datetime.now().isoformat()
         )
-        
+
         state.chapters[state.current_chapter] = chapter_content
-        
+
         state.chapter_status[state.current_chapter] = ChapterStatus.DRAFT
         state.review_round = 0
-        
+
+        # 7. 发布写作完成消息到 MessageBus
+        self.publish_message(
+            msg_type="info",
+            content=f"第{state.current_chapter}章写作完成，字数：{len(chapter_text)}，请审稿",
+            target="青锋",
+            chapter=state.current_chapter
+        )
+
         self._notify("chapter_written", {
             "chapter": state.current_chapter,
             "word_count": len(chapter_text)
         })
-        
+
         return state
+
+    def _get_messages_context(self, state):
+        """获取来自其他 Agent 的消息作为上下文"""
+        messages = self.get_messages_from_state(
+            msg_type="suggestion",
+            chapter=state.current_chapter,
+            limit=5
+        )
+        if not messages:
+            messages = self.get_messages_from_state(
+                chapter=state.current_chapter,
+                limit=5
+            )
+        if messages:
+            parts = ["\n【来自其他 Agent 的反馈】"]
+            for m in messages:
+                parts.append(f"  [{m['sender']}] {m['msg_type']}: {m['content']}")
+            return "\n".join(parts)
+        return ""
     
     def _get_chapter_plan(self, state):
         """获取章节计划"""
@@ -262,35 +310,49 @@ class WriterAgent(BaseAgent):
 
 class ReviewerAgent(BaseAgent):
     """青锋 - 审稿节点（结构化输出 + AI味评估）"""
-    
+
     def __init__(
         self,
         llm_client=None,
         memory: StoryMemory = None,
         error_handler=None,
-        prompt_assembler: PromptAssembler = None
+        prompt_assembler: PromptAssembler = None,
+        message_bus=None,
+        state=None
     ):
         super().__init__(
             persona=QingfengPersona(),
             llm_client=llm_client,
             memory=memory,
             error_handler=error_handler,
-            use_json_mode=True
+            use_json_mode=True,
+            message_bus=message_bus,
+            state=state
         )
         self.prompt_assembler = prompt_assembler or PromptAssembler()
-    
+
     def invoke(self, state):
-        """审稿（结构化输出 + AI味评估）"""
-        
+        """审稿（结构化输出 + AI味评估 + Agent 间通信）"""
+        self.state = state
+        self._current_chapter = state.current_chapter
+
         chapter_obj = state.chapters.get(state.current_chapter, "")
         chapter_text = getattr(chapter_obj, "text", chapter_obj)
         if not chapter_text:
             state.error_message = f"第{state.current_chapter}章无内容可审"
             return state
-        
+
+        # 0. 检查来自 Writer 的消息
+        writer_messages = self.get_messages_from_state(
+            chapter=state.current_chapter,
+            limit=3
+        )
+        if writer_messages:
+            print(f"  📨 [青锋] 收到来自墨川的消息")
+
         # 1. 获取章节计划
         chapter_plan = self._get_chapter_plan(state)
-        
+
         # 2. 使用 PromptAssembler 组装审稿 prompt
         prompt = self.prompt_assembler.assemble_reviewer_prompt(
             persona=self.persona,
@@ -299,16 +361,55 @@ class ReviewerAgent(BaseAgent):
             characters=state.characters,
             previous_chapter=self._get_previous_chapter(state)
         )
-        
+
         # 3. 调用 LLM
         result_dict = self._call_llm_raw(prompt, json_mode=True)
-        
+
         # 4. 解析结构化结果
         review = self._parse_review_result(result_dict)
-        
+
         # 5. 更新状态
         self._update_state_with_review(state, review)
-        
+
+        # 6. Agent 自主路由建议（根据 verdict）
+        if review.verdict.value == "pass":
+            self.suggest_route(
+                suggested_node="proofreader",
+                reason="审稿通过，符合发布标准，建议进入校对阶段",
+                confidence=0.9,
+                chapter=state.current_chapter
+            )
+        elif review.verdict.value == "rewrite":
+            self.suggest_route(
+                suggested_node="writer",
+                reason="需要重大重写，建议返回给墨川",
+                confidence=0.85,
+                chapter=state.current_chapter
+            )
+        else:
+            self.suggest_route(
+                suggested_node="reviser",
+                reason="需要局部修改，建议返回给墨川",
+                confidence=0.8,
+                chapter=state.current_chapter
+            )
+
+        # 7. 发布详细的审稿消息
+        issue_summary = ""
+        if hasattr(review, 'issues') and review.issues:
+            critical_count = sum(
+                1 for i in review.issues
+                if getattr(i, 'severity', '').upper() in ['S', 'CRITICAL', 'A']
+            )
+            issue_summary = f"，发现 {critical_count} 个严重问题"
+
+        self.publish_message(
+            msg_type="suggestion",
+            content=f"第{state.current_chapter}章审稿完成：{review.summary}，总分{review.total_score}分{issue_summary}",
+            target="墨川",
+            chapter=state.current_chapter
+        )
+
         self._notify("chapter_reviewed", {
             "chapter": state.current_chapter,
             "round": state.review_round,
@@ -316,7 +417,7 @@ class ReviewerAgent(BaseAgent):
             "ai_flavor": review.ai_flavor_level if hasattr(review, 'ai_flavor_level') else "unknown",
             "verdict": review.verdict.value
         })
-        
+
         return state
     
     def _call_llm_raw(self, prompt, json_mode=False):
@@ -406,43 +507,57 @@ class ReviewerAgent(BaseAgent):
 
 class ReviserAgent(BaseAgent):
     """修改节点"""
-    
+
     def __init__(
         self,
         llm_client=None,
         memory: StoryMemory = None,
         error_handler=None,
-        prompt_assembler: PromptAssembler = None
+        prompt_assembler: PromptAssembler = None,
+        message_bus=None,
+        state=None
     ):
         super().__init__(
             persona=MochuanPersona(),
             llm_client=llm_client,
             memory=memory,
             error_handler=error_handler,
-            use_json_mode=False
+            use_json_mode=False,
+            message_bus=message_bus,
+            state=state
         )
         self.persona.tone += "（当前任务：根据编辑意见修改，保持开放心态）"
         self.prompt_assembler = prompt_assembler or PromptAssembler()
-    
+
     def invoke(self, state):
-        """根据审稿意见修改"""
-        
+        """根据审稿意见修改（支持 MessageBus 消息反馈）"""
+        self.state = state
+        self._current_chapter = state.current_chapter
+
         chapter_obj = state.chapters.get(state.current_chapter, "")
         chapter_text = getattr(chapter_obj, "text", chapter_obj)
         latest = state.get_latest_review()
-        
+
         if not latest:
             state.error_message = "无审稿记录，无法修改"
             return state
-        
+
+        # 0. 检查来自审稿者的详细消息
+        reviewer_messages = self.get_messages_from_state(
+            chapter=state.current_chapter,
+            limit=5
+        )
+        if reviewer_messages:
+            print(f"  📨 [墨川] 收到 {len(reviewer_messages)} 条来自青锋的消息")
+
         # 1. 获取结构化审稿结果
         structured_review = None
         if hasattr(state, 'structured_reviews') and state.current_chapter in state.structured_reviews:
             structured_review = state.structured_reviews[state.current_chapter][-1]
-        
+
         # 2. 构建修改上下文
         context = self._build_reviser_context(state, chapter_text, latest, structured_review)
-        
+
         # 3. 使用 PromptAssembler 组装修改 prompt
         prompt = self.prompt_assembler.assemble_writer_prompt(
             persona=self.persona,
@@ -450,10 +565,10 @@ class ReviserAgent(BaseAgent):
             context=context,
             humanization=True
         )
-        
+
         # 4. 调用 LLM
         revised_text = self._call_llm_raw(prompt)
-        
+
         # 5. 更新状态
         from core.state import ChapterStatus
         from core.schema import ChapterContent
@@ -465,12 +580,20 @@ class ReviserAgent(BaseAgent):
             modified_at=datetime.now().isoformat()
         )
         state.chapter_status[state.current_chapter] = ChapterStatus.REVISING
-        
+
+        # 6. 发布修改完成消息
+        self.publish_message(
+            msg_type="info",
+            content=f"第{state.current_chapter}章修改完成（第{state.review_round}轮），请重新审稿",
+            target="青锋",
+            chapter=state.current_chapter
+        )
+
         self._notify("chapter_revised", {
             "chapter": state.current_chapter,
             "round": state.review_round
         })
-        
+
         return state
     
     def _build_reviser_context(self, state, chapter_text, latest, structured_review=None):
@@ -502,32 +625,46 @@ class ReviserAgent(BaseAgent):
 
 
 class ProofreaderAgent(BaseAgent):
-    """砚清 - 校对节点（结构化输出 + 终审）"""
-    
+    """砚清 - 校对节点（结构化输出 + 终审 + Agent 间通信）"""
+
     def __init__(
         self,
         llm_client=None,
         memory: StoryMemory = None,
         error_handler=None,
-        prompt_assembler: PromptAssembler = None
+        prompt_assembler: PromptAssembler = None,
+        message_bus=None,
+        state=None
     ):
         super().__init__(
             persona=YanqingPersona(),
             llm_client=llm_client,
             memory=memory,
             error_handler=error_handler,
-            use_json_mode=True
+            use_json_mode=True,
+            message_bus=message_bus,
+            state=state
         )
         self.prompt_assembler = prompt_assembler or PromptAssembler()
-    
+
     def invoke(self, state):
-        """校对（结构化输出 + 终审）"""
+        """校对（结构化输出 + 终审 + Agent 间通信）"""
+        self.state = state
+        self._current_chapter = state.current_chapter
 
         chapter_obj = state.chapters.get(state.current_chapter, "")
         chapter_text = getattr(chapter_obj, "text", chapter_obj)
 
         scope = getattr(state, "proofread_scope", "chapter")
         proofread_context = getattr(state, "proofread_context", {}) or {}
+
+        # 0. 检查来自其他 Agent 的消息
+        messages = self.get_messages_from_state(
+            chapter=state.current_chapter,
+            limit=3
+        )
+        if messages:
+            print(f"  📨 [砚清] 收到 {len(messages)} 条消息")
 
         # 1. 使用 PromptAssembler 组装校对 prompt
         prompt = self.prompt_assembler.assemble_proofreader_prompt(
@@ -538,22 +675,55 @@ class ProofreaderAgent(BaseAgent):
             scope=scope,
             project_docs=proofread_context if scope == "project_docs" else None
         )
-        
+
         # 2. 调用 LLM
         result_dict = self._call_llm_raw(prompt, json_mode=True)
-        
+
         # 3. 解析结果
         proofread = self._parse_proofread_result(result_dict)
-        
+
         # 4. 更新状态
         self._update_state_with_proofread(state, proofread)
-        
+
+        # 5. Agent 自主路由建议（根据终审结果）
+        verdict = proofread.verdict if hasattr(proofread, 'verdict') else "需返修"
+        if verdict == "可发布":
+            self.suggest_route(
+                suggested_node="knowledge_extractor",
+                reason="终审通过，质量达标，建议进入萃取阶段",
+                confidence=0.95,
+                chapter=state.current_chapter
+            )
+        elif verdict == "可交付":
+            self.suggest_route(
+                suggested_node="knowledge_extractor",
+                reason="终审通过，质量合格，建议进入萃取阶段",
+                confidence=0.85,
+                chapter=state.current_chapter
+            )
+        else:
+            self.suggest_route(
+                suggested_node="reviser",
+                reason="终审发现问题，需要返修",
+                confidence=0.9,
+                chapter=state.current_chapter
+            )
+
+        # 6. 发布校对消息
+        issue_count = len(proofread.issues) if hasattr(proofread, 'issues') else 0
+        self.publish_message(
+            msg_type="info",
+            content=f"第{state.current_chapter}章校对完成：{verdict}，发现{issue_count}个问题",
+            target="墨川",
+            chapter=state.current_chapter
+        )
+
         self._notify("chapter_proofread", {
             "chapter": state.current_chapter,
             "passed": proofread.passed,
-            "verdict": proofread.verdict if hasattr(proofread, 'verdict') else "unknown"
+            "verdict": verdict
         })
-        
+
         return state
     
     def _call_llm_raw(self, prompt, json_mode=False):

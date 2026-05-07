@@ -1,8 +1,69 @@
 # 配置系统说明
 
-## 配置文件
+StoryForge 使用两套配置系统（历史原因，两者共存），请根据使用场景选择：
 
-StoryForge 使用 YAML 配置文件管理所有设置（LLM、存储、服务器、Pipeline 等）。
+---
+
+## 配置系统一：web_console (JSON)
+
+### 用途
+- FastAPI 操作界面
+- 任务管理
+- IP 生成
+- 调试输出
+
+### 配置文件位置
+
+- 文件：`~/.storyforge/config.json`
+- 加载入口：`core/settings.py`
+- 优先级：环境变量 > 配置文件
+
+### 环境变量
+
+| 环境变量 | 配置路径 |
+|----------|----------|
+| `STORYFORGE_MAX_RUNNING_TASKS` | `console.max_running_tasks` |
+| `STORYFORGE_DEFAULT_COMMAND` | `console.default_command` |
+| `STORYFORGE_TEMPLATE_FILE` | `console.template_file` |
+| `STORYFORGE_DEBUG_DIR` | `debug.output_dir` |
+| `STORYFORGE_DEFAULT_TARGET_WORD_COUNT` | `pipeline.default_target_word_count` |
+
+### 配置文件示例
+
+```json
+{
+    "console": {
+        "max_running_tasks": 2,
+        "default_command": "python examples/debug_pipeline.py",
+        "template_file": "~/work/StoryForge/web_console/templates.json"
+    },
+    "debug": {
+        "output_dir": "~/work/StoryForge/debug_output"
+    },
+    "pipeline": {
+        "default_target_word_count": 3000
+    }
+}
+```
+
+### 诊断命令
+
+```bash
+# 查看当前生效配置（含来源）
+python -m core.settings
+
+# 仅校验配置（成功返回 0，失败非 0）
+python -m core.settings --check
+```
+
+---
+
+## 配置系统二：backend (YAML)
+
+### 用途
+- Flask API 服务
+- 数据存储
+- Pipeline 配置
 
 ### 配置文件位置
 
@@ -10,41 +71,32 @@ StoryForge 使用 YAML 配置文件管理所有设置（LLM、存储、服务器
 
 1. `$STORYFORGE_CONFIG` 环境变量指定的路径
 2. `~/.storyforge/storyforge.yaml`  ← **推荐位置**
-3. `<项目根目录>/.storyforge/storyforge.yaml`
+3. `<project_root>/.storyforge/storyforge.yaml`
 4. 内置默认值
 
-### 首次运行
-
-`deploy.sh` 会自动从 `docs/config-example.md` 提取配置模板复制到 `~/.storyforge/storyforge.yaml`：
-
-```bash
-./deploy.sh config  # 查看当前配置文件
-```
-
-### 编辑配置
-
-编辑 `~/.storyforge/storyforge.yaml`：
+### 配置文件示例
 
 ```yaml
 llm:
-  provider: mock
-  model: gpt-4o-mini
-  api_key: ""
-  base_url: ""
-  temperature: 0.7
-  timeout: 60
+    provider: mock
+    model: gpt-4o-mini
+    api_key: ""
+    base_url: ""
+    temperature: 0.7
+    timeout: 60
+    extra: {}
 
 storage:
-  data_dir: ~/.storyforge/data
+    data_dir: ~/.storyforge/data
 
 server:
-  host: 0.0.0.0
-  port: 5089
-  cors_origins: "*"
+    host: 0.0.0.0
+    port: 5089
+    cors_origins: "*"
 
 pipeline:
-  max_review_rounds: 3
-  default_target_word_count: 3000
+    max_review_rounds: 3
+    default_target_word_count: 3000
 ```
 
 **注意**：配置文件放在用户主目录，不会被任何 Git 仓库追踪，可安全填写 API 密钥。
@@ -53,7 +105,7 @@ pipeline:
 
 ---
 
-## 配置项详解
+## 配置项详解（YAML）
 
 ### LLM 配置 (`llm.*`)
 
@@ -71,40 +123,40 @@ pipeline:
 
 ```yaml
 llm:
-  provider: openai
-  model: gpt-4o-mini
-  api_key: "sk-..."
-  temperature: 0.7
+    provider: openai
+    model: gpt-4o-mini
+    api_key: "sk-..."
+    temperature: 0.7
 ```
 
 #### 示例：OpenAI 兼容接口（DeepSeek / vLLM）
 
 ```yaml
 llm:
-  provider: openai
-  model: deepseek-chat
-  api_key: "sk-..."
-  base_url: "https://api.deepseek.com/v1"
+    provider: openai
+    model: deepseek-chat
+    api_key: "sk-..."
+    base_url: "https://api.deepseek.com/v1"
 ```
 
 #### 示例：Anthropic Claude
 
 ```yaml
 llm:
-  provider: anthropic
-  model: claude-3-opus-20240229
-  api_key: "sk-ant..."
-  temperature: 0.7
-  extra:
-    max_tokens: 4096  # Claude 需要指定
+    provider: anthropic
+    model: claude-3-opus-20240229
+    api_key: "sk-ant..."
+    temperature: 0.7
+    extra:
+        max_tokens: 4096  # Claude 需要指定
 ```
 
 #### 示例：Mock（用于本地测试）
 
 ```yaml
 llm:
-  provider: mock
-  # model/api_key 等被忽略
+    provider: mock
+    # model/api_key 等被忽略
 ```
 
 ---
@@ -144,7 +196,7 @@ llm:
 | `server.port` | 端口 | `5089` |
 | `server.cors_origins` | 允许跨域的源 | `"*"` |
 
-**覆盖方式**：可通过环境变量 `$PORT` / `$HOST` 临时覆盖
+**覆盖方式**：可通过环境变量 `$PORT` / `$HOST` 临时覆盖（注意：仅适用于 Flask backend）。
 
 ---
 
@@ -159,50 +211,43 @@ llm:
 
 ## Python API
 
-### 获取配置
+### YAML 配置 (core.config)
 
 ```python
-from core.config import get_config
+from core.config import get_config, load_config, reset_config
 
+# 获取配置（带缓存）
 config = get_config()
 
+# 强制重新加载
+config = get_config(reload=True)
+
+# 显式指定路径
+config = load_config("/path/to/myconfig.yaml")
+
+# 清空缓存（测试用）
+reset_config()
+
+# 访问配置
 print(config.llm.provider)
 print(config.server.port)
 print(config.data_dir_abs)  # data_dir 的绝对路径
 ```
 
-### 重新加载配置
+### JSON 配置 (core.settings)
 
 ```python
-from core.config import get_config, reset_config
+from core.settings import get_settings, get_settings_with_sources
 
-reset_config()  # 清空缓存
-config = get_config(reload=True)  # 强制重新加载
-```
+# 获取配置（带缓存）
+settings = get_settings()
 
-### 显式指定路径
+# 获取配置 + 来源信息
+settings, sources = get_settings_with_sources()
+print(sources)  # {"console.max_running_tasks": "file:..." , ...}
 
-```python
-from core.config import load_config
-
-config = load_config("/path/to/myconfig.yaml")
-```
-
----
-
-## 部署脚本集成
-
-`deploy.sh` 会自动从配置读取 `server.port` 和 `server.host`：
-
-```bash
-./deploy.sh status
-```
-
-输出会显示配置文件路径：
-```
-========================================
-      StoryForge 部署状态
-========================================
-配置文件: /Users/you/.storyforge/storyforge.yaml
-[OK] 配置: 已加载
+# 访问配置
+print(settings.console.max_running_tasks)
+print(settings.debug.output_dir)
+print(settings.pipeline.default_target_word_count)
 ```

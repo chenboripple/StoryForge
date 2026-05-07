@@ -7,12 +7,14 @@ from langgraph.graph import StateGraph, END
 from typing import Dict, Callable, Any, Optional
 import json
 import os
+from collections import Counter
 
 from core.state import NovelState, ChapterStatus, PipelineStage
 from core.schema import ReviewVerdict
 from core.memory import StoryMemory
 from core.prompt_assembler import PromptAssembler
 from core.utils.errors import ErrorHandler
+from core.agent import MessageBus
 from agents.creation_agents import (
     WriterAgent, ReviewerAgent, ReviserAgent, ProofreaderAgent
 )
@@ -43,6 +45,8 @@ class NovelPipeline:
         use_outline_refinement: bool = True,
         use_extraction: bool = True,
         use_ip_generation: bool = True,
+        use_message_bus: bool = True,  # 启用 Agent 间消息总线
+        use_agent_routing: bool = False,  # 是否启用 Agent 自主路由（渐进式）
         checkpoint_dir: Optional[str] = None,  # 断点续跑检查点目录
         ip_output_dir: str = "./ip_assets"
     ):
@@ -51,6 +55,8 @@ class NovelPipeline:
         self.use_outline_refinement = use_outline_refinement
         self.use_extraction = use_extraction
         self.use_ip_generation = use_ip_generation
+        self.use_message_bus = use_message_bus
+        self.use_agent_routing = use_agent_routing
         self.checkpoint_dir = checkpoint_dir or ".checkpoints"
         self.ip_output_dir = ip_output_dir
         self.memory: Optional[StoryMemory] = None
@@ -59,18 +65,19 @@ class NovelPipeline:
         self.knowledge_extractor: Optional[KnowledgeExtractor] = None
         self.ip_generator: Optional[IPGenerator] = None
         self.error_handler: Optional[ErrorHandler] = None
+        self.message_bus: Optional[MessageBus] = None
         self.workflow = None
         self._last_node: Optional[str] = None  # 上一个执行节点
-        
+
         # Agent 引用（用于断点续跑）
         self._writer_agent = None
         self._reviewer_agent = None
         self._reviser_agent = None
         self._proofreader_agent = None
-        
+
         # 确保检查点目录存在
         os.makedirs(self.checkpoint_dir, exist_ok=True)
-        
+
         self._initialize_components()
         self._build()
     
@@ -78,17 +85,21 @@ class NovelPipeline:
         """初始化组件"""
         if self.use_memory:
             self.memory = StoryMemory()
-        
+
         self.prompt_assembler = PromptAssembler()
         self.outline_generator = OutlineGenerator(self.llm_client)
         self.error_handler = ErrorHandler()
-        
+
+        # 初始化 MessageBus
+        if self.use_message_bus:
+            self.message_bus = MessageBus()
+
         if self.use_extraction:
             self.knowledge_extractor = KnowledgeExtractor(
                 llm_client=self.llm_client,
                 memory=self.memory
             )
-        
+
         if self.use_ip_generation:
             self.ip_generator = IPGenerator(
                 llm_client=self.llm_client,
@@ -97,47 +108,52 @@ class NovelPipeline:
     
     def _build(self):
         """构建 LangGraph 工作流"""
-        
+
         # 初始化 Agent（保存引用用于断点续跑）
+        # 注入 MessageBus 到所有 Agent
         self._writer_agent = WriterAgent(
             llm_client=self.llm_client,
             memory=self.memory,
             error_handler=self.error_handler,
-            prompt_assembler=self.prompt_assembler
+            prompt_assembler=self.prompt_assembler,
+            message_bus=self.message_bus
         )
         self._reviewer_agent = ReviewerAgent(
             llm_client=self.llm_client,
             memory=self.memory,
             error_handler=self.error_handler,
-            prompt_assembler=self.prompt_assembler
+            prompt_assembler=self.prompt_assembler,
+            message_bus=self.message_bus
         )
         self._reviser_agent = ReviserAgent(
             llm_client=self.llm_client,
             memory=self.memory,
             error_handler=self.error_handler,
-            prompt_assembler=self.prompt_assembler
+            prompt_assembler=self.prompt_assembler,
+            message_bus=self.message_bus
         )
         self._proofreader_agent = ProofreaderAgent(
             llm_client=self.llm_client,
             memory=self.memory,
             error_handler=self.error_handler,
-            prompt_assembler=self.prompt_assembler
+            prompt_assembler=self.prompt_assembler,
+            message_bus=self.message_bus
         )
-        
+
         # 创建图
         workflow = StateGraph(NovelState)
-        
+
         # ========== 添加节点 ==========
-        
+
         # 大纲细化阶段
         if self.use_outline_refinement:
             workflow.add_node("outline_refiner", self._outline_refiner)
-        
-        # 创作层节点
-        workflow.add_node("writer", self._writer_agent.invoke)
-        workflow.add_node("reviewer", self._reviewer_agent.invoke)
-        workflow.add_node("reviser", self._reviser_agent.invoke)
-        workflow.add_node("proofreader", self._proofreader_agent.invoke)
+
+        # 创作层节点（包装 invoke 以绑定 state 到 Agent）
+        workflow.add_node("writer", self._wrap_agent_invoke(self._writer_agent, "writer"))
+        workflow.add_node("reviewer", self._wrap_agent_invoke(self._reviewer_agent, "reviewer"))
+        workflow.add_node("reviser", self._wrap_agent_invoke(self._reviser_agent, "reviser"))
+        workflow.add_node("proofreader", self._wrap_agent_invoke(self._proofreader_agent, "proofreader"))
         
         # 萃取层节点
         workflow.add_node("knowledge_extractor", self._knowledge_extractor)
@@ -190,6 +206,46 @@ class NovelPipeline:
         
         self.workflow = workflow.compile()
     
+    def _wrap_agent_invoke(self, agent, node_name: str):
+        """包装 Agent.invoke 以绑定 state 并自动保存检查点"""
+        def _invoke(state: NovelState) -> NovelState:
+            # 绑定 state 到 Agent（用于消息持久化）
+            agent.state = state
+            agent._current_chapter = state.current_chapter
+
+            # 打印消息总线状态（如果启用）
+            if self.use_message_bus and self.message_bus:
+                messages = self.message_bus.get_messages(
+                    chapter=state.current_chapter,
+                    since=None
+                )
+                if messages:
+                    print(f"  📨 [{node_name}] 当前章节有 {len(messages)} 条消息")
+
+            # 执行 Agent
+            try:
+                result = agent.invoke(state)
+            except Exception as e:
+                print(f"  ❌ {node_name} 执行失败: {e}")
+                state.error_message = f"{node_name} 失败: {str(e)}"
+                return state
+
+            # 同步消息到 state（确保 MessageBus 消息被持久化）
+            if self.use_message_bus and self.message_bus and hasattr(state, 'agent_messages'):
+                bus_messages = self.message_bus.to_dict()
+                # 合并新消息到 state
+                existing_ids = {m.get('timestamp') for m in state.agent_messages}
+                for msg in bus_messages:
+                    if msg.get('timestamp') not in existing_ids:
+                        state.agent_messages.append(msg)
+
+            # 保存检查点
+            self._save_checkpoint(result, node_name)
+            self._last_node = node_name
+
+            return result
+        return _invoke
+
     def _outline_refiner(self, state: NovelState) -> NovelState:
         """大纲细化阶段：生成章级细纲"""
         print(f"📝 大纲细化阶段：第{state.current_chapter}章")
@@ -248,11 +304,17 @@ class NovelPipeline:
         return state
     
     def _review_router(self, state: NovelState) -> str:
-        """审稿路由（检查 AI味等级）"""
+        """审稿路由（支持 Agent 自主路由建议 + 原逻辑混合）"""
+        # 1. 检查 Agent 自主路由建议（优先）
+        if self.use_agent_routing:
+            suggested_route = self._get_agent_routing_suggestion(state, "reviewer")
+            if suggested_route:
+                return suggested_route
+
         if state.error_message:
             print(f"❌ 错误：{state.error_message}")
             return "max_retries"
-        
+
         latest = state.get_latest_review()
         if not latest:
             return "revise"
@@ -295,7 +357,7 @@ class NovelPipeline:
         if verdict_value == "revise":
             print(f"📝 第{state.current_chapter}章需要修改，第{state.review_round + 1}轮修改")
             return "revise"
-        
+
         # 回退到原逻辑（分数）
         score = latest.score
         if score >= 85:
@@ -307,9 +369,72 @@ class NovelPipeline:
         else:
             print(f"❌ 第{state.current_chapter}章评分过低（{score}分），要求重写")
             return "rewrite"
-    
+
+    def _get_agent_routing_suggestion(self, state: NovelState,
+                                       from_node: str,
+                                       min_confidence: float = 0.7) -> Optional[str]:
+        """获取 Agent 自主路由建议（用于混合路由）"""
+        if not hasattr(state, 'routing_suggestions') or not state.routing_suggestions:
+            return None
+
+        # 获取当前章节的最新路由建议
+        chapter_suggestions = [
+            s for s in state.routing_suggestions
+            if s.get('chapter') == state.current_chapter or s.get('chapter') is None
+        ]
+
+        if not chapter_suggestions:
+            return None
+
+        # 按置信度和时间排序（最新且置信度最高的优先）
+        chapter_suggestions.sort(
+            key=lambda s: (s.get('confidence', 0), s.get('timestamp', '')),
+            reverse=True
+        )
+
+        best_suggestion = chapter_suggestions[0]
+        confidence = best_suggestion.get('confidence', 0)
+
+        if confidence < min_confidence:
+            return None
+
+        suggested_node = best_suggestion.get('suggested_node')
+        reason = best_suggestion.get('reason')
+        suggested_by = best_suggestion.get('suggested_by')
+
+        # 验证是有效的节点名
+        valid_nodes = {'approve', 'revise', 'rewrite', 'max_retries',
+                       'pass', 'fail', 'proofreader', 'writer', 'knowledge_extractor'}
+        if suggested_node not in valid_nodes:
+            return None
+
+        # 打印路由决策
+        print(f"🤖 [Agent 自主路由] {suggested_by} 建议: {suggested_node} (置信度: {confidence:.2f})")
+        print(f"   原因: {reason}")
+
+        # 映射到路由值
+        node_map = {
+            'approve': 'approve',
+            'proofreader': 'approve',
+            'revise': 'revise',
+            'rewrite': 'rewrite',
+            'writer': 'rewrite',
+            'pass': 'pass',
+            'knowledge_extractor': 'pass',
+            'fail': 'fail',
+            'max_retries': 'max_retries'
+        }
+
+        return node_map.get(suggested_node, None)
+
     def _proofread_router(self, state: NovelState) -> str:
-        """校对路由（检查终审判定）"""
+        """校对路由（支持 Agent 自主路由建议 + 原逻辑混合）"""
+        # 1. 检查 Agent 自主路由建议（优先）
+        if self.use_agent_routing:
+            suggested_route = self._get_agent_routing_suggestion(state, "proofreader")
+            if suggested_route:
+                return suggested_route
+
         status = state.get_current_chapter_status()
 
         # 获取结构化校对结果（专用容器，避免与审稿结果混用）
@@ -642,11 +767,26 @@ class NovelPipeline:
 def create_pipeline(
     llm_client: Callable = None,
     use_memory: bool = True,
-    use_outline_refinement: bool = True
+    use_outline_refinement: bool = True,
+    use_message_bus: bool = True,
+    use_agent_routing: bool = False,
+    **kwargs
 ) -> NovelPipeline:
-    """创建 Pipeline"""
+    """创建 Pipeline
+
+    Args:
+        llm_client: LLM 客户端
+        use_memory: 是否启用记忆系统
+        use_outline_refinement: 是否启用大纲细化
+        use_message_bus: 是否启用 Agent 间消息总线（默认 True）
+        use_agent_routing: 是否启用 Agent 自主路由（默认 False，渐进式开启）
+        **kwargs: 其他参数传递给 NovelPipeline
+    """
     return NovelPipeline(
         llm_client=llm_client,
         use_memory=use_memory,
-        use_outline_refinement=use_outline_refinement
+        use_outline_refinement=use_outline_refinement,
+        use_message_bus=use_message_bus,
+        use_agent_routing=use_agent_routing,
+        **kwargs
     )
