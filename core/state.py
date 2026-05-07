@@ -1,5 +1,5 @@
 """
-NovelForge - 核心状态定义
+StoryForge - 核心状态定义
 全局状态对象，贯穿整个 Pipeline
 """
 
@@ -8,44 +8,46 @@ from typing import List, Dict, Optional, Any
 from enum import Enum
 import copy
 
+from core.settings import get_settings
+
 
 class ChapterStatus(Enum):
     """章节状态"""
-    PENDING = "pending"         # 待写作
-    DRAFT = "draft"             # 初稿完成
-    IN_REVIEW = "in_review"     # 审稿中
-    REVISING = "revising"       # 修改中
-    PROOFREADING = "proofreading"  # 校对中
-    APPROVED = "approved"       # 已通过
-    REJECTED = "rejected"       # 被驳回
+    PENDING = "pending"
+    DRAFT = "draft"
+    IN_REVIEW = "in_review"
+    REVISING = "revising"
+    PROOFREADING = "proofreading"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class PipelineStage(Enum):
     """Pipeline 阶段"""
-    CREATION = "creation"       # 创作层
-    EXTRACTION = "extraction"   # 萃取层
-    IP_GENERATION = "ip_generation"  # IP 生成层
+    CREATION = "creation"
+    EXTRACTION = "extraction"
+    IP_GENERATION = "ip_generation"
 
 
 @dataclass
 class ReviewRecord:
     """审稿记录"""
-    round: int                  # 第几轮审稿
-    reviewer: str               # 审稿人名字
-    score: int                  # 评分 0-100
-    comments: str               # 审稿意见
-    passed: bool                # 是否通过
-    timestamp: Optional[str] = None  # 时间戳
+    round: int
+    reviewer: str
+    score: int
+    comments: str
+    passed: bool
+    timestamp: str = ""
 
 
 @dataclass
 class ProofreadRecord:
     """校对记录"""
-    round: int                  # 第几轮校对
-    proofreader: str            # 校对人名字
-    comments: str               # 校对意见
-    passed: bool                # 是否通过
-    timestamp: Optional[str] = None  # 时间戳
+    round: int
+    proofreader: str
+    comments: str
+    passed: bool
+    timestamp: str = ""
 
 
 @dataclass
@@ -53,92 +55,96 @@ class CharacterInfo:
     """角色信息"""
     name: str
     age: Optional[int] = None
-    appearance: str = ""        # 外貌描述
-    personality: str = ""       # 性格标签
-    background: str = ""        # 背景故事
+    appearance: str = ""
+    personality: str = ""
+    background: str = ""
     goals: List[str] = field(default_factory=list)
     relationships: Dict[str, str] = field(default_factory=dict)
-    classic_lines: List[str] = field(default_factory=list)  # 经典台词
+    classic_lines: List[str] = field(default_factory=list)
+
+
+DEFAULT_SETTINGS = get_settings()
 
 
 @dataclass
 class NovelState:
-    """
-    全局状态对象 - LangGraph 的共享状态
-    
-    设计原则：
-    1. 所有 Agent 节点读写同一个状态对象
-    2. 状态字段按阶段分组，便于追踪
-    3. 不可变字段用 Optional，可变字段用空默认值
-    """
-    
-    # ==================== 元数据 ====================
-    novel_id: str = ""                          # 小说唯一标识
-    novel_title: str = ""                       # 小说标题
-    genre: str = ""                             # 类型（科幻/玄幻/都市...）
-    target_word_count: int = 3000               # 目标单章字数
+    """小说全局状态"""
+
+    # 元数据
+    novel_id: str = ""
+    novel_title: str = ""
+    genre: str = ""
+    target_word_count: int = DEFAULT_SETTINGS.pipeline.default_target_word_count
     current_stage: PipelineStage = PipelineStage.CREATION
-    
-    # ==================== 阶段一：创作层 ====================
-    # 大纲
-    concept: str = ""                           # 核心创意
-    outline: str = ""                           # 完整大纲
-    volume_outline: Dict[int, str] = field(default_factory=dict)  # 分卷大纲
-    
-    # 角色
+
+    # 创作层
+    concept: str = ""
+    outline: str = ""
+    volume_outline: Dict[int, str] = field(default_factory=dict)
     characters: List[CharacterInfo] = field(default_factory=list)
-    
-    # 章节（key: 章节号, value: 内容）
-    chapters: Dict[int, str] = field(default_factory=dict)
+
+    # 章节与审稿（单一真源：creation['chapters']）
+    chapters: Dict[int, Any] = field(default_factory=dict)
     chapter_status: Dict[int, ChapterStatus] = field(default_factory=dict)
-    
-    # 审稿循环
-    current_chapter: int = 1                    # 当前处理章节
-    review_round: int = 0                       # 当前审稿轮次
-    max_review_rounds: int = 3                  # 最大审稿轮次
-    reviews: Dict[int, List[ReviewRecord]] = field(default_factory=dict)  # 章节审稿记录
-    proofread_records: Dict[int, List[ProofreadRecord]] = field(default_factory=dict)  # 章节校对记录
-    
-    # ==================== 阶段二：萃取层 ====================
+    current_chapter: int = 1
+    review_round: int = 0
+    max_review_rounds: int = 3
+    reviews: Dict[int, List[Any]] = field(default_factory=dict)
+    structured_reviews: Dict[int, List[Any]] = field(default_factory=dict)
+    proofread_results: Dict[int, List[Any]] = field(default_factory=dict)
+    proofread_records: Dict[int, List[Any]] = field(default_factory=dict)  # 校对记录
+
+    # 校对范围控制：chapter | volume | book | project_docs
+    proofread_scope: str = "chapter"
+    # 可选的综合校对输入（大纲/卷纲/世界观/时间线/人物设定等）
+    proofread_context: Dict[str, Any] = field(default_factory=dict)
+
+    # 萃取层
     knowledge_base: Dict[str, Any] = field(default_factory=dict)
-    # 结构：
-    # {
-    #   "characters": {角色名: {外貌、性格、关系、成长弧线}},
-    #   "world": {世界观设定},
-    #   "plots": {名场面列表、金句、情感高潮点}
-    # }
+    chapter_analyses: Dict[int, Any] = field(default_factory=dict)  # 知识萃取结果
     
-    # ==================== 阶段三：IP 生成层 ====================
+    # IP 生成层
     character_ips: Dict[str, Dict] = field(default_factory=dict)
-    # 结构：
-    # {
-    #   "角色名": {
-    #     "personality_config": {},  # 角色 AI 人格配置
-    #     "visual_assets": [],       # 视觉资产列表
-    #     "video_scripts": []        # 视频脚本
-    #   }
-    # }
-    
     visual_assets: Dict[str, List[Dict]] = field(default_factory=dict)
-    
-    # ==================== 控制字段 ====================
-    error_message: str = ""                     # 错误信息
-    human_feedback: Optional[str] = None        # 人工反馈（Human-in-the-loop）
-    should_pause: bool = False                  # 是否暂停等待人工介入
-    
+    story_bible: Optional[Any] = None  # Story Bible 对象
+
+    # 兼容容器（仅用于存储非章节类辅助数据，不再与 chapters 双向绑定）
+    creation: Dict[str, Any] = field(default_factory=dict)
+
+    # 控制字段
+    error_message: str = ""
+    human_feedback: Optional[str] = None
+    should_pause: bool = False
+
+    def __post_init__(self):
+        # 兼容旧数据：如果 creation 中有 chapters 且 self.chapters 为空，迁移一次
+        if isinstance(self.creation, dict):
+            if "chapters" in self.creation and not self.chapters:
+                self.chapters = self.creation["chapters"]
+            # 确保 creation 中有 chapters 引用（供旧代码访问）
+            self.creation["chapters"] = self.chapters
+        else:
+            self.creation = {"chapters": self.chapters}
+        
+        # 初始化 creation 中的辅助字段
+        if isinstance(self.creation, dict):
+            self.creation.setdefault("chapter_outlines", {})
+            self.creation.setdefault("chapter_summaries", {})
+            self.creation.setdefault("extraction_notes", {})
+
     def get_current_chapter_status(self) -> ChapterStatus:
         """获取当前章节状态"""
         return self.chapter_status.get(self.current_chapter, ChapterStatus.PENDING)
-    
-    def get_latest_review(self) -> Optional[ReviewRecord]:
+
+    def get_latest_review(self) -> Optional[Any]:
         """获取当前章节最新审稿记录"""
         chapter_reviews = self.reviews.get(self.current_chapter, [])
         return chapter_reviews[-1] if chapter_reviews else None
-    
+
     def can_continue_review(self) -> bool:
         """检查是否还能继续审稿（未超最大轮次）"""
         return self.review_round < self.max_review_rounds
-    
+
     def to_context_string(self) -> str:
         """转换为上下文字符串（供 Agent 使用）"""
         context = f"""

@@ -2,288 +2,172 @@
 
 基于 LangGraph + CrewAI 风格角色系统的多 Agent 小说创作与 IP 衍生平台。
 
-## 特性
+## 架构
 
-- **多 Agent 协作创作** — 小说家（墨川）、编辑（青锋）、校对（砚清）各司其职
-- **审稿-修改闭环** — 图结构实现循环审稿，自动触发修改直到达标
-- **角色即提示词工程** — 产品人设直接转化为系统提示词注入 LLM
-- **三阶段 Pipeline** — 创作（Creation）→ 萃取（Extraction）→ IP 生成（IP Generation）
-- **Web UI** — 小说清单页、详情页、章节预览、Pipeline 进度可视化
-- **统一配置** — 基于 YAML 的配置系统，包含 LLM、存储、服务器等所有设置
-- **持久化存储** — 自动保存到 JSON，支持清单索引和状态查询 API
+- **LangGraph**: 流程编排与状态管理
+- **CrewAI 风格**: 角色人设与任务定义
+- **三阶段 Pipeline**: 创作 → 萃取 → IP 生成
+- **结构化输出**: JSON Schema 确保 LLM 输出可解析
+- **记忆系统**: 事件时间线 + 角色状态追踪
+- **人味化规则**: 禁用 AI 常见句式，提升文本自然度
+
+## 快速开始
+
+```bash
+pip install -r requirements.txt
+python examples/debug_pipeline.py
+```
+
+## 配置
+
+统一配置入口：`core/settings.py`。
+
+默认读取用户配置文件：`~/.storyforge/config.json`。
+
+优先级：**环境变量 > `~/.storyforge/config.json`**（无代码默认值，缺失即报错）。
+
+配置文件示例：
+
+```json
+{
+  "console": {
+    "max_running_tasks": 2,
+    "default_command": "python3 examples/debug_pipeline.py",
+    "template_file": "~/work/StoryForge/web_console/templates.json"
+  },
+  "debug": {
+    "output_dir": "~/work/StoryForge/debug_output"
+  },
+  "pipeline": {
+    "default_target_word_count": 3000
+  }
+}
+```
+
+必填配置项（可在环境变量或配置文件中提供）：
+
+| 环境变量 | 配置路径 |
+|---|---|
+| `STORYFORGE_MAX_RUNNING_TASKS` | `console.max_running_tasks` |
+| `STORYFORGE_DEFAULT_COMMAND` | `console.default_command` |
+| `STORYFORGE_TEMPLATE_FILE` | `console.template_file` |
+| `STORYFORGE_DEBUG_DIR` | `debug.output_dir` |
+| `STORYFORGE_DEFAULT_TARGET_WORD_COUNT` | `pipeline.default_target_word_count` |
+
+快速排查当前实际生效配置（含每个字段来源）：
+
+```bash
+python -m core.settings
+```
+
+仅做配置有效性校验（成功返回 0，失败返回非 0）：
+
+```bash
+python -m core.settings --check
+```
+
+## 操作页面（MVP）
+
+启动命令：
+
+```bash
+uvicorn web_console.app:app --reload --port 8787
+```
+
+浏览器访问 `http://127.0.0.1:8787`。
+支持启动任务、查看状态、查看日志、停止任务，以及模板保存、并发上限控制、日志下载。
+
+新增人物 IP 操作区（手动触发）：
+- 先选择小说（从 `debug_output/state_final_*.json` 自动发现）
+- 再选择人物（支持多选）
+- 可点击“生成人物IP”或“重新生成（覆盖）”
+
+本地向量库写入：`local_store/vector_store.jsonl`
+人物 IP 资产落盘：`local_store/ip_assets/<novel_id>/<character>.json`
 
 ## 项目结构
 
 ```
 StoryForge/
-├── core/                      # 核心基类
-│   ├── agent.py               # AgentPersona、BaseAgent、Task
-│   ├── state.py               # NovelState、ReviewRecord、ProofreadRecord 等状态定义
-│   ├── config.py              # 配置系统（YAML 解析、路径解析）
-│   └── llm_factory.py         # LLM 客户端工厂（mock/openai/anthropic）
-├── agents/                    # Agent 角色实现
-│   └── creation_agents.py     # WriterAgent、ReviewerAgent、ReviserAgent、ProofreaderAgent
-├── pipeline/                  # LangGraph 流程编排
-│   └── novel_pipeline.py      # NovelPipeline、路由逻辑
-├── backend/                   # Web 后端（Flask）
-│   ├── __init__.py
-│   ├── app.py                 # Flask 应用 + API 端点
-│   └── storage.py             # JSON 存储层（保存/加载/索引）
-├── client/                    # Web 前端（React）
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── index.css
-│   │   ├── api/client.js
-│   │   └── pages/
-│   │       ├── NovelList.jsx
-│   │       └── NovelDetail.jsx
-│   ├── public/index.html
-│   ├── package.json
-│   └── README.md
-├── examples/                  # 示例
-│   └── demo_pipeline.py       # 完整演示（含 Mock LLM + 保存到 Storage）
-├── docs/                      # 文档（含 config-example.md 配置模板）
-├── deploy.sh                  # 自动部署脚本
-├── requirements.txt           # 核心依赖
-├── requirements-web.txt       # Web 服务依赖
-├── LICENSE
-└── README.md
+├── core/              # 核心基类
+│   ├── state.py       # NovelState 状态管理
+│   ├── agent_v2.py    # BaseAgent 基类
+│   ├── schema.py      # 结构化输出 Schema
+│   ├── memory.py      # 记忆系统
+│   ├── outline.py     # 大纲数据结构
+│   ├── prompt_assembler.py  # 动态 Prompt 组装
+│   ├── settings.py    # 统一配置入口
+│   └── utils/         # 工具函数
+├── agents/            # Agent 角色定义
+│   └── creation_agents.py    # 墨川/青锋/砚清
+├── pipeline/          # LangGraph 流程定义
+│   └── novel_pipeline.py     # 完整 Pipeline
+├── examples/          # 示例和调试脚本
+│   └── debug_pipeline.py     # 调试脚本（推荐）
+├── web_console/       # 操作页面（FastAPI）
+├── stages/            # 三阶段实现（创作/萃取/IP）
+├── tests/             # 测试
+└── docs/              # 文档
 ```
 
-> 配置与数据存放在用户主目录：
-> - `~/.storyforge/storyforge.yaml`（配置文件）
-> - `~/.storyforge/data/`（小说数据目录）
-> 配置模板见 [docs/config-example.md](docs/config-example.md)。
+## 核心特性
 
-## 快速开始
+### 1. 大纲细化阶段
+- 基于卷纲生成章级细纲
+- 包含：场景列表、字数分配、伏笔规划
 
-### 方式一：一键部署（推荐）
+### 2. PromptAssembler 动态组装
+- 根据上下文动态构建 prompt
+- 融入人味化规则（禁用 AI 常见句式）
+- 支持审稿/校对/写作三种模式
+
+### 3. 结构化审稿（8 维度）
+- 叙事结构、人物一致性、文学性、市场潜力
+- AI 味评估（低/中/高）
+- 位置一致性检查
+- 元叙事穿帮检测
+
+### 4. 结构化校对（6 层级）
+- 基础层、设定层、时间线层、人物层、地理层、伏笔层
+- 终审判定：可发布 / 可交付 / 需返修
+
+### 5. 智能路由
+- AI 味过高 → 自动重写
+- 终审不通过 → 返修改
+- 审稿通过 → 进入校对
+
+## 调试
+
+调试脚本会自动保存：
+- 每个 LLM 调用的完整 prompt
+- 所有 prompt 调用历史（JSON）
+- Pipeline 运行前后的状态快照
 
 ```bash
-# 首次运行会自动复制配置文件
-./deploy.sh
+# 查看保存的 prompt
+cat debug_output/prompt_*.txt
+
+# 查看状态变化
+cat debug_output/state_initial.json
+cat debug_output/state_final_*.json
 ```
 
-部署后访问 http://localhost:5089
+## 角色系统
 
-### 方式二：手动安装
-
-#### 1. 安装依赖
-
-```bash
-# 核心依赖
-pip install -r requirements.txt
-
-# Web 服务依赖
-pip install -r requirements-web.txt
-```
-
-#### 2. 配置
-
-编辑 `~/.storyforge/storyforge.yaml`（首次运行 `./deploy.sh` 会从 [docs/config-example.md](docs/config-example.md) 自动复制）：
-
-```yaml
-llm:
-  provider: mock        # 或 openai/anthropic
-  api_key: ""           # 你的 API Key
-  model: gpt-4o-mini
-
-server:
-  port: 5089            # 服务端口
-
-storage:
-  data_dir: ~/.storyforge/data   # 小说数据目录（支持绝对路径 / ~/ / 相对配置文件）
-```
-
-#### 3. 运行示例并保存
-
-```bash
-python examples/demo_pipeline.py --save
-```
-
-#### 4. 启动服务
-
-```bash
-# 开发模式（自动重载）
-python backend/app.py
-
-# 或生产模式（gunicorn 常驻后台）
-./deploy.sh start
-```
-
-访问 http://localhost:5089 查看 Web UI
-
-### 核心用法（Python API）
-
-```python
-from core.state import NovelState, CharacterInfo
-from core.config import get_config
-from core.llm_factory import create_llm_client
-from pipeline.novel_pipeline import create_pipeline
-
-# 1. 加载配置（自动从 ~/.storyforge/storyforge.yaml 读取）
-config = get_config()
-
-# 2. 根据配置创建 LLM 客户端
-llm = create_llm_client(config.llm)
-
-# 3. 创建 Pipeline
-pipeline = create_pipeline(llm_client=llm)
-
-# 4. 准备初始状态
-state = NovelState(
-    novel_id="novel_001",
-    novel_title="熵塔",
-    genre="科幻末日",
-    target_word_count=3000,
-    current_chapter=1,
-    concept="末日后的世界，主角发现父亲参与的禁忌实验",
-    outline="第一卷：崩塌\n第1章：观测塔废墟...",
-    characters=[
-        CharacterInfo(
-            name="林晚",
-            personality="理性、果断",
-            background="前物理学家"
-        )
-    ]
-)
-
-# 5. 运行（单章）
-result = pipeline.run(state)
-
-# 6. 保存到 Storage
-from backend import storage
-storage.save_novel(result)
-```
-
-## 部署命令
-
-```bash
-# 查看当前配置
-./deploy.sh config
-
-# 完整部署（安装依赖+构建前端+启动后台服务）
-./deploy.sh
-
-# 启动/停止/重启
-./deploy.sh start
-./deploy.sh stop
-./deploy.sh restart
-
-# 查看状态
-./deploy.sh status
-
-# 查看日志
-./deploy.sh logs          # 错误日志
-./deploy.sh logs access   # 访问日志
-./deploy.sh logs all      # 所有日志
-```
-
-## API 端点
-
-| 端点 | 方法 | 描述 |
+| 角色 | 职责 | 特点 |
 |------|------|------|
-| `/api/health` | GET | 健康检查（返回当前配置路径、数据目录） |
-| `/api/novels` | GET | 获取小说清单（轻量索引） |
-| `/api/novels/<novel_id>` | GET | 获取单个小说完整状态 |
-| `/api/novels/<novel_id>/chapters` | GET | 获取章节列表（含状态、字数、分数预览） |
-| `/api/novels/<novel_id>/chapters/<chapter_num>` | GET | 获取章节内容和完整审稿/校对记录 |
+| 墨川 | 小说家 | 冷峻理性，物理背景 |
+| 青锋 | 文学编辑 | 犀利直接，20年经验 |
+| 砚清 | 校对专家 | 严谨细致，处女座 |
 
-## 核心设计
-
-### 1. Agent 角色系统
-
-每个 Agent 有完整的人设，自动转化为系统提示词：
-
-| Agent | 人设 | 职责 |
-|-------|------|------|
-| **墨川** | 职业小说家 | 基于大纲创作章节 |
-| **青锋** | 资深文学编辑 | 从结构/人物/文学性三维审稿 |
-| **砚清** | 文字校对专家 | 消除错字、逻辑漏洞、设定矛盾 |
-
-### 2. Pipeline 流程图
+## 依赖
 
 ```
-writer(写作) → reviewer(审稿)
-                     ↓
-              ┌────┴────┐
-           ≥85分   60-84分   <60分
-              ↓        ↓         ↓
-        proofreader  reviser   writer
-        (校对)      (修改)    (重写)
-              ↓        ↓
-              └────┬────┘
-              approved
-                   ↓
-         knowledge_extractor
-              (知识萃取)
-                   ↓
-            ip_designer
-              (IP 生成)
-                   ↓
-                  END
+langgraph>=0.0.50
+langchain>=0.1.0
+pydantic>=2.0
 ```
 
-审稿循环支持最多 3 轮，超过则强制进入下一节点，避免死循环。
+## License
 
-### 3. 状态管理
-
-`NovelState` 是贯穿整个 Pipeline 的全局状态对象，包含：
-
-- 小说元数据（标题、类型、字数目标）
-- 大纲与角色设定
-- 章节内容与状态
-- **审稿记录**（`reviews`）和**校对记录**（`proofread_records`）独立存储
-- Human-in-the-loop 接口（`human_feedback`、`should_pause`）
-
-**新增方法（用于 Web UI）**：
-- `to_dict()` → 序列化为 JSON 友好的字典
-- `to_index_entry()` → 生成清单页所需的轻量索引
-- `from_dict(data)` → 从字典安全还原（支持字符串 key 的章节反序列化为 int）
-
-### 4. 配置系统
-
-统一通过 `~/.storyforge/storyforge.yaml` 配置：
-
-```yaml
-llm:
-  provider: mock/openai/anthropic
-  model: gpt-4o-mini
-  api_key: "sk-..."
-  base_url: ""                # 自定义 endpoint（可选）
-  temperature: 0.7
-
-storage:
-  data_dir: ~/.storyforge/data
-
-server:
-  host: 0.0.0.0
-  port: 5089
-  cors_origins: "*"
-
-pipeline:
-  max_review_rounds: 3
-  default_target_word_count: 3000
-```
-
-配置加载优先级：
-1. `$STORYFORGE_CONFIG` 环境变量指定的路径
-2. `~/.storyforge/storyforge.yaml`  ← **推荐**
-3. `<项目根目录>/.storyforge/storyforge.yaml`
-4. 内置默认值
-
-完整配置示例与说明见 [docs/config-example.md](docs/config-example.md)。
-
-## 文档
-
-- [系统架构](docs/architecture.md)
-- [Agent 系统设计](docs/agent-system.md)
-- [Pipeline 流程详解](docs/pipeline.md)
-- [Web API 参考](docs/api-reference.md)
-- [配置系统说明](docs/config.md)
-- [配置文件示例](docs/config-example.md)
-
-## 许可证
-
-代码采用 MIT 许可证，生成内容采用 CC BY-NC-SA 4.0。
-详见 [LICENSE](LICENSE)。
+MIT

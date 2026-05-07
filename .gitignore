@@ -32,3 +32,6 @@ Thumbs.db
 
 # Generated data (keep index template, not user data)
 data/
+
+# Local config (now at ~/.storyforge/)
+.storyforge/

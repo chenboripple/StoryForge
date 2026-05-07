@@ -1,20 +1,26 @@
 """
-NovelForge - 角色定义
-墨川、青锋、砚清等 Agent 的具体实现
+StoryForge - 创作 Agent
+使用 PromptAssembler 动态组装 prompt，支持大纲细化和人味化规则
 """
 
-from core.agent import AgentPersona, BaseAgent
-from core.state import NovelState, ReviewRecord, ProofreadRecord, ChapterStatus
-
-import re
 from datetime import datetime
+from typing import Optional
+
+from core.agent import BaseAgent, AgentPersona
+from core.memory import StoryMemory
+from core.schema import (
+    ReviewResult, ProofreadResult, ChapterContent,
+    REVIEW_JSON_PROMPT, PROOFREAD_JSON_PROMPT
+)
+from core.prompt_assembler import PromptAssembler
 
 
-# ==================== 阶段一：创作层 Agent ====================
+
+# ==================== 角色人设（保持兼容） ====================
 
 class MochuanPersona(AgentPersona):
     """墨川 - 小说家"""
-
+    
     def __init__(self):
         super().__init__(
             name="墨川",
@@ -47,14 +53,14 @@ class MochuanPersona(AgentPersona):
 
 class QingfengPersona(AgentPersona):
     """青锋 - 文学编辑"""
-
+    
     def __init__(self):
         super().__init__(
             name="青锋",
             role="资深文学编辑",
             goal="从叙事结构、人物一致性、文学性三个维度审稿，给出可执行的修改建议",
             backstory="""从业20年的文学编辑，经手过3部茅盾文学奖作品，退稿过500+部。
-眼光毒辣，但改稿意见永远具体到位——不说"这里不好"，而是说"这里如果改成XXX会更张力"。
+眼光毒辣，但改稿意见永远具体到位——不说"这里不好"，而是说"这里如果改成XXX会更有张力"。
 最恨两种作者：一种是不改，一种是乱改。""",
             expertise=[
                 "叙事结构分析",
@@ -67,7 +73,7 @@ class QingfengPersona(AgentPersona):
             principles=[
                 "审稿意见必须具体，指出具体段落和问题",
                 "评分标准：结构30%、人物30%、文字30%、市场潜力10%",
-                "区分'致命问题'和'优化建议'"
+                "区分致命问题和优化建议"
             ],
             constraints=[
                 "不修改作者原意，只提建议",
@@ -78,14 +84,14 @@ class QingfengPersona(AgentPersona):
 
 class YanqingPersona(AgentPersona):
     """砚清 - 文字校对专家"""
-
+    
     def __init__(self):
         super().__init__(
             name="砚清",
             role="文字校对专家",
             goal="消除所有文字错误、逻辑漏洞、设定矛盾，确保文本质量达到出版标准",
             backstory="""处女座，前出版社校对部主任，30年校对经验。
-能一眼看出三百页手稿里'他'和'她'的混用，能记住第50章出现的配角名字并在第200章发现拼写不一致。
+能一眼看出三百页手稿里"他"和"她"的混用，能记住第50章出现的配角名字并在第200章发现拼写不一致。
 相信好作品是改出来的，但改的前提是"找到所有问题"。""",
             expertise=[
                 "文字错误检测",
@@ -108,344 +114,488 @@ class YanqingPersona(AgentPersona):
         )
 
 
-# ==================== Agent 节点实现 ====================
+def _extract_json(text):
+    """从文本中提取 JSON 块"""
+    import re
+    match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+    if match:
+        return match.group(1)
+    match = re.search(r'```\s*(.*?)\s*```', text, re.DOTALL)
+    if match:
+        return match.group(1)
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        return match.group(0)
+    return text
+
 
 class WriterAgent(BaseAgent):
-    """墨川 - 写作节点"""
-
-    def __init__(self, llm_client=None):
-        super().__init__(MochuanPersona(), llm_client)
-
-    def invoke(self, state: NovelState) -> NovelState:
+    """墨川 - 写作节点（支持大纲细化和人味化）"""
+    
+    def __init__(
+        self,
+        llm_client=None,
+        memory: StoryMemory = None,
+        error_handler=None,
+        prompt_assembler: PromptAssembler = None
+    ):
+        super().__init__(
+            persona=MochuanPersona(),
+            llm_client=llm_client,
+            memory=memory,
+            error_handler=error_handler,
+            use_json_mode=False
+        )
+        self.prompt_assembler = prompt_assembler or PromptAssembler()
+    
+    def invoke(self, state):
         """写作章节"""
-
-        # 构建上下文
-        context = f"""
-【小说信息】
-标题：{state.novel_title}
-类型：{state.genre}
-
-【大纲】
-{state.outline[:500]}...
-
-【当前章节】第{state.current_chapter}章
-
-【角色设定】
-{self._format_characters(state.characters)}
-
-【已完成的最近章节】
-{self._get_recent_chapters(state)}
-"""
-
-        task = f"""请创作第{state.current_chapter}章，目标字数{state.target_word_count}字。
-
-要求：
-1. 严格遵循大纲中本章的情节安排
-2. 保持人物性格和动机的一致性
-3. 与上一章衔接自然
-4. 至少包含一个冲突或转折
-5. 结尾留悬念或钩子
-
-请直接输出章节正文，不需要标题和章节号。"""
-
-        # 调用 LLM
-        chapter_content = self.call_llm(task, context)
-
-        # 更新状态
+        
+        # 1. 获取章节计划
+        chapter_plan = self._get_chapter_plan(state)
+        
+        # 2. 构建上下文
+        context = self._build_writer_context(state)
+        memory_context = self._build_memory_context(state)
+        
+        # 3. 使用 PromptAssembler 组装 prompt
+        prompt = self.prompt_assembler.assemble_writer_prompt(
+            persona=self.persona,
+            chapter_plan=chapter_plan,
+            context=context,
+            memory_context=memory_context,
+            humanization=True
+        )
+        
+        # 4. 调用 LLM
+        chapter_text = self._call_llm_raw(prompt)
+        
+        # 5. 一致性检查
+        if self.memory:
+            issues = self.memory.check_consistency(state.current_chapter, chapter_text)
+            for issue in issues:
+                if issue.severity == "error":
+                    print(f"⚠️ 发现严重不一致：{issue.description}")
+        
+        # 6. 更新状态
+        from core.state import ChapterStatus
+        chapter_content = ChapterContent(
+            text=chapter_text,
+            version=1,
+            word_count=len(chapter_text),
+            generated_at=datetime.now().isoformat(),
+            modified_at=datetime.now().isoformat()
+        )
+        
         state.chapters[state.current_chapter] = chapter_content
+        
         state.chapter_status[state.current_chapter] = ChapterStatus.DRAFT
-        state.review_round = 0  # 重置审稿轮次
-
+        state.review_round = 0
+        
         self._notify("chapter_written", {
             "chapter": state.current_chapter,
-            "word_count": len(chapter_content)
+            "word_count": len(chapter_text)
         })
-
+        
         return state
-
-    def _format_characters(self, characters) -> str:
-        """格式化角色信息"""
+    
+    def _get_chapter_plan(self, state):
+        """获取章节计划"""
+        # 优先从 creation.chapter_outlines 获取
+        if hasattr(state, 'creation') and state.creation:
+            outlines = state.creation.get('chapter_outlines', {})
+            if state.current_chapter in outlines:
+                return outlines[state.current_chapter]
+        
+        # 回退到 outline 字段
+        if hasattr(state, 'outline') and state.outline:
+            return {
+                "chapter_id": state.current_chapter,
+                "title": f"第{state.current_chapter}章",
+                "theme": "",
+                "plot": state.outline[:200] if state.outline else "",
+                "words_target": state.target_word_count
+            }
+        
+        return None
+    
+    def _build_writer_context(self, state):
+        """构建写作用上下文"""
+        parts = [
+            f"【小说信息】\n标题：{state.novel_title}\n类型：{state.genre}\n",
+            f"\n【大纲】\n{state.outline[:500] if state.outline else '暂无'}...\n",
+            f"\n【当前章节】第{state.current_chapter}章\n",
+            f"\n【角色设定】\n{self._format_characters(state.characters)}\n"
+        ]
+        
+        recent = self._get_recent_chapters(state)
+        if recent:
+            parts.append(f"\n【最近章节】\n{recent}")
+        
+        return "\n".join(parts)
+    
+    def _call_llm_raw(self, prompt):
+        """调用基类统一 LLM 入口"""
+        return super()._call_llm_raw(
+            prompt=prompt,
+            json_mode=False,
+            task="写作章节（使用动态Prompt）"
+        )
+    
+    def _format_characters(self, characters):
         if not characters:
             return "暂无角色设定"
         return "\n".join([
-            f"- {c.name}：{c.personality}。{c.background[:100]}..."
-            for c in characters[:5]  # 只取前5个主要角色
+            f"- {c.name}：{c.personality}\n  背景：{c.background[:100] if hasattr(c, 'background') else ''}..."
+            for c in characters[:5]
         ])
-
-    def _get_recent_chapters(self, state: NovelState) -> str:
-        """获取最近完成的章节摘要"""
+    
+    def _get_recent_chapters(self, state):
         recent = []
         for i in range(max(1, state.current_chapter - 2), state.current_chapter):
             if i in state.chapters:
-                content = state.chapters[i][-200:]
-                recent.append(f"第{i}章结尾：...{content}")
-        return "\n".join(recent) if recent else "无"
+                chapter_obj = state.chapters[i]
+                content = getattr(chapter_obj, "text", chapter_obj)[:200]
+                recent.append(f"第{i}章结尾：{content}...")
+        return "\n".join(recent)
 
 
 class ReviewerAgent(BaseAgent):
-    """青锋 - 审稿节点"""
-
-    def __init__(self, llm_client=None):
-        super().__init__(QingfengPersona(), llm_client)
-
-    def invoke(self, state: NovelState) -> NovelState:
-        """审稿并给出评分和建议"""
-
-        chapter_content = state.chapters.get(state.current_chapter, "")
-        if not chapter_content:
+    """青锋 - 审稿节点（结构化输出 + AI味评估）"""
+    
+    def __init__(
+        self,
+        llm_client=None,
+        memory: StoryMemory = None,
+        error_handler=None,
+        prompt_assembler: PromptAssembler = None
+    ):
+        super().__init__(
+            persona=QingfengPersona(),
+            llm_client=llm_client,
+            memory=memory,
+            error_handler=error_handler,
+            use_json_mode=True
+        )
+        self.prompt_assembler = prompt_assembler or PromptAssembler()
+    
+    def invoke(self, state):
+        """审稿（结构化输出 + AI味评估）"""
+        
+        chapter_obj = state.chapters.get(state.current_chapter, "")
+        chapter_text = getattr(chapter_obj, "text", chapter_obj)
+        if not chapter_text:
             state.error_message = f"第{state.current_chapter}章无内容可审"
             return state
-
-        context = f"""
-【小说信息】
-{state.to_context_string()}
-
-【角色设定】
-{self._format_characters(state.characters)}
-
-【本章内容】
-{chapter_content[:1500]}...
-（共{len(chapter_content)}字）
-
-【历史审稿记录】
-{self._format_reviews(state)}
-"""
-
-        task = """请对以上章节进行审稿，按以下格式输出：
-
-【总体评分】XX分（0-100）
-
-【维度评分】
-- 叙事结构：XX分
-- 人物一致性：XX分
-- 文学性：XX分
-- 市场潜力：XX分
-
-【致命问题】（必须修改）
-1. ...
-
-【优化建议】（建议修改）
-1. ...
-
-【亮点】
-1. ...
-
-【是否通过】通过/需修改/重写"""
-
-        review_text = self.call_llm(task, context)
-
-        # 解析评分
-        score = self._extract_score(review_text)
-        passed = bool(re.search(r'【是否通过】\s*通过', review_text)) and score >= 85
-
-        # 创建审稿记录
+        
+        # 1. 获取章节计划
+        chapter_plan = self._get_chapter_plan(state)
+        
+        # 2. 使用 PromptAssembler 组装审稿 prompt
+        prompt = self.prompt_assembler.assemble_reviewer_prompt(
+            persona=self.persona,
+            chapter_content=chapter_text,
+            chapter_plan=chapter_plan,
+            characters=state.characters,
+            previous_chapter=self._get_previous_chapter(state)
+        )
+        
+        # 3. 调用 LLM
+        result_dict = self._call_llm_raw(prompt, json_mode=True)
+        
+        # 4. 解析结构化结果
+        review = self._parse_review_result(result_dict)
+        
+        # 5. 更新状态
+        self._update_state_with_review(state, review)
+        
+        self._notify("chapter_reviewed", {
+            "chapter": state.current_chapter,
+            "round": state.review_round,
+            "score": review.total_score,
+            "ai_flavor": review.ai_flavor_level if hasattr(review, 'ai_flavor_level') else "unknown",
+            "verdict": review.verdict.value
+        })
+        
+        return state
+    
+    def _call_llm_raw(self, prompt, json_mode=False):
+        """调用基类统一 LLM 入口"""
+        return super()._call_llm_raw(
+            prompt=prompt,
+            json_mode=json_mode,
+            task="审稿（结构化输出）"
+        )
+    
+    def _get_chapter_plan(self, state):
+        """获取章节计划"""
+        if hasattr(state, 'creation') and state.creation:
+            outlines = state.creation.get('chapter_outlines', {})
+            if state.current_chapter in outlines:
+                return outlines[state.current_chapter]
+        return None
+    
+    def _get_previous_chapter(self, state):
+        """获取前一章内容"""
+        prev = state.current_chapter - 1
+        if prev > 0 and prev in state.chapters:
+            prev_chapter = state.chapters[prev]
+            return getattr(prev_chapter, "text", prev_chapter)
+        return ""
+    
+    def _parse_review_result(self, result_dict):
+        """解析 JSON 结果为 ReviewResult 对象"""
+        from core.schema import DimensionScore, ReviewIssue, ReviewVerdict
+        
+        dimensions = [
+            DimensionScore(**d) for d in result_dict.get("dimensions", [])
+        ]
+        issues = [
+            ReviewIssue(**i) for i in result_dict.get("issues", [])
+        ]
+        verdict = ReviewVerdict(result_dict.get("verdict", "revise"))
+        
+        review = ReviewResult(
+            total_score=result_dict.get("total_score", 70),
+            dimensions=dimensions,
+            issues=issues,
+            verdict=verdict,
+            summary=result_dict.get("summary", "")
+        )
+        
+        # 添加 AI味评估
+        ai_flavor = result_dict.get("ai_flavor", {})
+        review.ai_flavor_score = ai_flavor.get("score", 5)
+        review.ai_flavor_level = ai_flavor.get("level", "medium")
+        
+        return review
+    
+    def _update_state_with_review(self, state, review):
+        """将审稿结果更新到状态"""
+        from core.state import ReviewRecord, ChapterStatus
+        
         record = ReviewRecord(
             round=state.review_round + 1,
             reviewer=self.persona.name,
-            score=score,
-            comments=review_text,
-            passed=passed,
+            score=review.total_score,
+            comments=review.summary,
+            passed=review.verdict.value == "pass",
             timestamp=datetime.now().isoformat()
         )
-
-        # 更新状态
+        
+        # 结构化数据存到新字段
+        if not hasattr(state, 'structured_reviews'):
+            state.structured_reviews = {}
+        state.structured_reviews.setdefault(state.current_chapter, []).append(review)
+        
+        # 兼容旧接口
         if state.current_chapter not in state.reviews:
             state.reviews[state.current_chapter] = []
         state.reviews[state.current_chapter].append(record)
+        
         state.review_round += 1
-
-        if passed:
+        
+        # 更新状态
+        if review.verdict.value == "pass":
             state.chapter_status[state.current_chapter] = ChapterStatus.APPROVED
+        elif review.verdict.value == "rewrite":
+            state.chapter_status[state.current_chapter] = ChapterStatus.PENDING
         else:
             state.chapter_status[state.current_chapter] = ChapterStatus.IN_REVIEW
 
-        self._notify("chapter_reviewed", {
-            "chapter": state.current_chapter,
-            "round": record.round,
-            "score": score,
-            "passed": passed
-        })
-
-        return state
-
-    def _extract_score(self, text: str) -> int:
-        """从审稿意见中提取评分"""
-        # 优先匹配 "总体评分】85分" 或 "评分：85" 等精确格式
-        patterns = [
-            r'总体评分[】\:]\s*(\d+)',
-            r'评分[】\:]\s*(\d+)',
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                score = int(match.group(1))
-                return min(100, max(0, score))  # 限制在0-100
-
-        # 兜底：匹配独立的 "XX分"，但排除 "XX分钟/秒/天" 等时间单位
-        fallback = re.search(r'(\d{2,3})\s*分', text)
-        if fallback:
-            # 检查后面是否跟着时间单位，排除误匹配
-            end_pos = fallback.end()
-            if end_pos >= len(text) or text[end_pos] not in ('钟', '秒', '天', '月', '年'):
-                score = int(fallback.group(1))
-                return min(100, max(0, score))
-
-        return 70  # 默认评分
-
-    def _format_characters(self, characters) -> str:
-        """格式化角色信息"""
-        if not characters:
-            return "暂无"
-        return "\n".join([
-            f"- {c.name}：{c.personality}"
-            for c in characters
-        ])
-
-    def _format_reviews(self, state: NovelState) -> str:
-        """格式化历史审稿记录"""
-        reviews = state.reviews.get(state.current_chapter, [])
-        if not reviews:
-            return "无"
-        return "\n".join([
-            f"第{r.round}轮：{r.reviewer} {r.score}分 {'通过' if r.passed else '未通过'}"
-            for r in reviews
-        ])
-
 
 class ReviserAgent(BaseAgent):
-    """修改节点（也是墨川，但任务不同）"""
-
-    # 修改时的额外提示（通过 call_llm 的 extra_system_prompt 参数传递，线程安全）
-    _extra_system_prompt = "【注意】当前任务是根据编辑意见修改，请保持开放心态采纳建议。"
-
-    def __init__(self, llm_client=None):
-        super().__init__(MochuanPersona(), llm_client)
-
-    def invoke(self, state: NovelState) -> NovelState:
+    """修改节点"""
+    
+    def __init__(
+        self,
+        llm_client=None,
+        memory: StoryMemory = None,
+        error_handler=None,
+        prompt_assembler: PromptAssembler = None
+    ):
+        super().__init__(
+            persona=MochuanPersona(),
+            llm_client=llm_client,
+            memory=memory,
+            error_handler=error_handler,
+            use_json_mode=False
+        )
+        self.persona.tone += "（当前任务：根据编辑意见修改，保持开放心态）"
+        self.prompt_assembler = prompt_assembler or PromptAssembler()
+    
+    def invoke(self, state):
         """根据审稿意见修改"""
-
-        chapter_content = state.chapters.get(state.current_chapter, "")
-        latest_review = state.get_latest_review()
-
-        if not latest_review:
+        
+        chapter_obj = state.chapters.get(state.current_chapter, "")
+        chapter_text = getattr(chapter_obj, "text", chapter_obj)
+        latest = state.get_latest_review()
+        
+        if not latest:
             state.error_message = "无审稿记录，无法修改"
             return state
-
-        context = f"""
-【当前章节内容】
-{chapter_content}
-
-【编辑审稿意见】
-{latest_review.comments}
-
-【历史修改轮次】{state.review_round}轮
-"""
-
-        task = """请根据以上审稿意见修改章节。
-
-要求：
-1. 优先处理"致命问题"
-2. 尽量采纳"优化建议"
-3. 保持原有风格和亮点
-4. 输出完整的修改后章节（不是修改说明）
-
-请直接输出修改后的完整章节正文。"""
-
-        # 通过参数传递额外提示，不修改 persona 实例（线程安全、异常安全）
-        revised_content = self.call_llm(
-            task,
-            context,
-            extra_system_prompt=self._extra_system_prompt
+        
+        # 1. 获取结构化审稿结果
+        structured_review = None
+        if hasattr(state, 'structured_reviews') and state.current_chapter in state.structured_reviews:
+            structured_review = state.structured_reviews[state.current_chapter][-1]
+        
+        # 2. 构建修改上下文
+        context = self._build_reviser_context(state, chapter_text, latest, structured_review)
+        
+        # 3. 使用 PromptAssembler 组装修改 prompt
+        prompt = self.prompt_assembler.assemble_writer_prompt(
+            persona=self.persona,
+            chapter_plan=None,
+            context=context,
+            humanization=True
         )
+        
+        # 4. 调用 LLM
+        revised_text = self._call_llm_raw(prompt)
+        
+        # 5. 更新状态
+        from core.state import ChapterStatus
+        from core.schema import ChapterContent
 
-        # 更新状态
-        state.chapters[state.current_chapter] = revised_content
+        state.chapters[state.current_chapter] = ChapterContent(
+            text=revised_text,
+            version=state.review_round + 1,
+            word_count=len(revised_text),
+            modified_at=datetime.now().isoformat()
+        )
         state.chapter_status[state.current_chapter] = ChapterStatus.REVISING
-
+        
         self._notify("chapter_revised", {
             "chapter": state.current_chapter,
             "round": state.review_round
         })
-
+        
         return state
+    
+    def _build_reviser_context(self, state, chapter_text, latest, structured_review=None):
+        """构建修改上下文"""
+        parts = [
+            f"【当前章节内容】\n{chapter_text}\n",
+            f"\n【编辑审稿意见】\n{latest.comments}\n",
+            f"\n【历史修改轮次】{state.review_round}轮"
+        ]
+        
+        # 如果有结构化审稿结果，添加可执行建议
+        if structured_review and hasattr(structured_review, 'issues'):
+            parts.append("\n【可执行修改建议】")
+            for issue in structured_review.issues:
+                severity = getattr(issue, 'severity', 'B')
+                if severity in ['S', 'A']:  # 只显示必须改的建议
+                    parts.append(f"  [{severity}] {getattr(issue, 'location', '')}: {getattr(issue, 'description', '')}")
+                    if hasattr(issue, 'suggestion'):
+                        parts.append(f"    建议：{issue.suggestion}")
+        
+        return "\n".join(parts)
+    
+    def _call_llm_raw(self, prompt):
+        return super()._call_llm_raw(
+            prompt=prompt,
+            json_mode=False,
+            task="根据审稿意见修改"
+        )
 
 
 class ProofreaderAgent(BaseAgent):
-    """砚清 - 校对节点"""
-
-    def __init__(self, llm_client=None):
-        super().__init__(YanqingPersona(), llm_client)
-
-    def invoke(self, state: NovelState) -> NovelState:
-        """最终校对"""
-
-        chapter_content = state.chapters.get(state.current_chapter, "")
-
-        context = f"""
-【章节内容】
-{chapter_content}
-
-【角色名单】（请检查一致性）
-{'、'.join(c.name for c in state.characters) if state.characters else '无'}
-"""
-
-        task = """请对以上章节进行最终校对，检查：
-
-1. 错别字、标点错误
-2. 人物名字前后不一致
-3. 时间线/地理矛盾
-4. 逻辑漏洞
-5. 格式规范
-
-按以下格式输出：
-
-【错误列表】
-- 第X段："原文" → 应改为"修改"
-
-【一致性检查】
-- 通过/问题：...
-
-【总体评价】
-通过 / 需返工
-
-如果无错误，直接输出"通过"。"""
-
-        proofread_result = self.call_llm(task, context)
-
-        # 判断是否通过（精确匹配，避免"未通过"里的"通过"被误判）
-        passed = (
-            re.search(r'【总体评价】\s*通过', proofread_result) is not None
-            or (proofread_result.strip() == "通过")
+    """砚清 - 校对节点（结构化输出 + 终审）"""
+    
+    def __init__(
+        self,
+        llm_client=None,
+        memory: StoryMemory = None,
+        error_handler=None,
+        prompt_assembler: PromptAssembler = None
+    ):
+        super().__init__(
+            persona=YanqingPersona(),
+            llm_client=llm_client,
+            memory=memory,
+            error_handler=error_handler,
+            use_json_mode=True
         )
-        # 如果有"需返工"，则不通过
-        if "需返工" in proofread_result:
-            passed = False
+        self.prompt_assembler = prompt_assembler or PromptAssembler()
+    
+    def invoke(self, state):
+        """校对（结构化输出 + 终审）"""
 
-        # 计算这是第几轮校对
-        chapter_proofreads = state.proofread_records.get(state.current_chapter, [])
-        current_proofread_round = len(chapter_proofreads) + 1
+        chapter_obj = state.chapters.get(state.current_chapter, "")
+        chapter_text = getattr(chapter_obj, "text", chapter_obj)
 
-        # 保存校对记录到独立字段，不混进审稿记录
-        proofread_record = ProofreadRecord(
-            round=current_proofread_round,
-            proofreader=self.persona.name,
-            comments=proofread_result,
-            passed=passed,
-            timestamp=datetime.now().isoformat()
+        scope = getattr(state, "proofread_scope", "chapter")
+        proofread_context = getattr(state, "proofread_context", {}) or {}
+
+        # 1. 使用 PromptAssembler 组装校对 prompt
+        prompt = self.prompt_assembler.assemble_proofreader_prompt(
+            persona=self.persona,
+            chapter_content=chapter_text,
+            characters=state.characters,
+            world_setting=proofread_context.get("world_setting"),
+            scope=scope,
+            project_docs=proofread_context if scope == "project_docs" else None
         )
-        state.proofread_records.setdefault(state.current_chapter, []).append(proofread_record)
+        
+        # 2. 调用 LLM
+        result_dict = self._call_llm_raw(prompt, json_mode=True)
+        
+        # 3. 解析结果
+        proofread = self._parse_proofread_result(result_dict)
+        
+        # 4. 更新状态
+        self._update_state_with_proofread(state, proofread)
+        
+        self._notify("chapter_proofread", {
+            "chapter": state.current_chapter,
+            "passed": proofread.passed,
+            "verdict": proofread.verdict if hasattr(proofread, 'verdict') else "unknown"
+        })
+        
+        return state
+    
+    def _call_llm_raw(self, prompt, json_mode=False):
+        return super()._call_llm_raw(
+            prompt=prompt,
+            json_mode=json_mode,
+            task="校对（结构化输出 + 终审）"
+        )
+    
+    def _parse_proofread_result(self, result_dict):
+        from core.schema import ProofreadIssue
+        
+        issues = [
+            ProofreadIssue(**i) for i in result_dict.get("issues", [])
+        ]
+        
+        proofread = ProofreadResult(
+            passed=result_dict.get("passed", False),
+            issues=issues,
+            summary=result_dict.get("summary", "")
+        )
+        
+        # 添加终审判定
+        proofread.verdict = result_dict.get("verdict", "需返修")
+        
+        return proofread
+    
+    def _update_state_with_proofread(self, state, proofread):
+        from core.state import ChapterStatus, ReviewRecord
 
-        if passed:
+        state.proofread_results.setdefault(state.current_chapter, []).append(proofread)
+
+        if proofread.passed:
             state.chapter_status[state.current_chapter] = ChapterStatus.APPROVED
         else:
             state.chapter_status[state.current_chapter] = ChapterStatus.PROOFREADING
-            # 注意：这里不修改 reviews 字段，只在 proofread_records 保存校对记录
-            # 如果需要触发修改流程，可以单独处理
-
-        self._notify("chapter_proofread", {
-            "chapter": state.current_chapter,
-            "round": current_proofread_round,
-            "passed": passed
-        })
-
-        return state
+            record = ReviewRecord(
+                round=state.review_round + 1,
+                reviewer=self.persona.name,
+                score=80 if proofread.passed else 50,
+                comments=proofread.summary,
+                passed=proofread.passed,
+                timestamp=datetime.now().isoformat()
+            )
+            state.reviews.setdefault(state.current_chapter, []).append(record)
