@@ -185,17 +185,21 @@ class NovelImporter:
         Returns:
             {"success": bool, "novel_id": str, "state": NovelState, ...}
         """
-        import sys
-        import os
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-        from backend.storage import save_novel
-
         result = self.import_to_state(filepath, novel_id, **options)
 
         if result["success"] and result["state"]:
             try:
-                save_novel(result["state"])
+                from core.storage import get_storage_manager
+                sm = get_storage_manager()
+                # 保存元数据
+                state = result["state"]
+                sm.create_novel(
+                    novel_id=state.novel_id,
+                    title=state.novel_title,
+                    genre=state.genre,
+                    concept=state.concept,
+                    target_word_count=state.target_word_count,
+                )
                 result["saved"] = True
                 result["novel_id"] = result["state"].novel_id
             except Exception as e:

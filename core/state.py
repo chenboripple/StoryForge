@@ -9,50 +9,18 @@ from enum import Enum
 import copy
 
 from core.config import get_config
+from core.models.chapter import ChapterStatus
+from core.models.novel_meta import PipelineStage
+from core.models.review import ReviewVerdict, ReviewRecord as CoreReviewRecord
+from core.models.proofread import ProofreadRecord as CoreProofreadRecord
+from core.models.characters import Character
+from core.models.agent_comm import AgentMessage, RoutingSuggestion
 
 
-class ChapterStatus(Enum):
-    """章节状态"""
-    PENDING = "pending"
-    DRAFT = "draft"
-    IN_REVIEW = "in_review"
-    REVISING = "revising"
-    PROOFREADING = "proofreading"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
-
-class PipelineStage(Enum):
-    """Pipeline 阶段"""
-    CREATION = "creation"
-    EXTRACTION = "extraction"
-    IP_GENERATION = "ip_generation"
-
-
-@dataclass
-class ReviewRecord:
-    """审稿记录"""
-    round: int
-    reviewer: str
-    score: int
-    comments: str
-    passed: bool
-    timestamp: str = ""
-
-
-@dataclass
-class ProofreadRecord:
-    """校对记录"""
-    round: int
-    proofreader: str
-    comments: str
-    passed: bool
-    timestamp: str = ""
-
-
+# 兼容层：使用 core.models 中的类型作为运行时容器
 @dataclass
 class CharacterInfo:
-    """角色信息"""
+    """角色信息（保留用于兼容层，使用 core.models.Character）"""
     name: str
     age: Optional[int] = None
     appearance: str = ""
@@ -62,26 +30,50 @@ class CharacterInfo:
     relationships: Dict[str, str] = field(default_factory=dict)
     classic_lines: List[str] = field(default_factory=list)
 
+    @classmethod
+    def from_character(cls, char: Character) -> "CharacterInfo":
+        return cls(
+            name=char.name,
+            age=char.age,
+            appearance=char.appearance,
+            personality=char.personality,
+            background=char.background,
+            goals=char.goals,
+            relationships={}  # 简化关系
+        )
 
+
+# 兼容层：保留简化版 ReviewRecord
 @dataclass
-class AgentMessageState:
-    """Agent 间消息（用于持久化）"""
-    sender: str
-    msg_type: str
-    content: str
-    target: Optional[str] = None
-    chapter: Optional[int] = None
+class ReviewRecord:
+    """审稿记录（兼容层）"""
+    round: int
+    reviewer: str
+    score: int
+    comments: str
+    passed: bool
     timestamp: str = ""
-    priority: str = "normal"
+
+    @classmethod
+    def from_core(cls, core: CoreReviewRecord) -> "ReviewRecord":
+        return cls(
+            round=core.round,
+            reviewer=core.reviewer,
+            score=core.total_score,
+            comments=core.summary,
+            passed=core.passed,
+            timestamp=core.timestamp
+        )
 
 
+# 兼容层：保留简化版 ProofreadRecord
 @dataclass
-class RoutingSuggestion:
-    """Agent 路由建议"""
-    suggested_by: str
-    suggested_node: str
-    reason: str
-    confidence: float = 0.8
+class ProofreadRecord:
+    """校对记录（兼容层）"""
+    round: int
+    proofreader: str
+    comments: str
+    passed: bool
     timestamp: str = ""
 
 
@@ -121,7 +113,7 @@ class NovelState:
     # 萃取层
     knowledge_base: Dict[str, Any] = field(default_factory=dict)
     chapter_analyses: Dict[int, Any] = field(default_factory=dict)  # 知识萃取结果
-    
+
     # IP 生成层
     character_ips: Dict[str, Dict] = field(default_factory=dict)
     visual_assets: Dict[str, List[Dict]] = field(default_factory=dict)
@@ -148,7 +140,7 @@ class NovelState:
             self.creation["chapters"] = self.chapters
         else:
             self.creation = {"chapters": self.chapters}
-        
+
         # 初始化 creation 中的辅助字段
         if isinstance(self.creation, dict):
             self.creation.setdefault("chapter_outlines", {})
@@ -252,9 +244,9 @@ class NovelState:
         return self.routing_suggestions
 
     def add_agent_message(self, sender: str, msg_type: str, content: str,
-                          target: Optional[str] = None,
-                          chapter: Optional[int] = None,
-                          priority: str = "normal"):
+                             target: Optional[str] = None,
+                             chapter: Optional[int] = None,
+                             priority: str = "normal"):
         """添加 Agent 消息"""
         from datetime import datetime
         self.agent_messages.append({

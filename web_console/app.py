@@ -20,7 +20,9 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
-from core.settings import get_settings
+from core.config import get_config
+
+_cfg = get_config()
 
 
 @dataclass
@@ -73,15 +75,13 @@ class GenerateIpRequest(BaseModel):
     force_regenerate: bool = False
 
 
-settings = get_settings()
-
 app = FastAPI(title="StoryForge Console", version="0.2.0")
 TASKS: Dict[str, TaskRuntime] = {}
 IP_TASKS: Dict[str, IpTaskRuntime] = {}
 TASK_LOCK = threading.Lock()
-MAX_RUNNING_TASKS = settings.console.max_running_tasks
-DEFAULT_COMMAND = settings.console.default_command
-TEMPLATE_FILE = settings.console.template_file
+MAX_RUNNING_TASKS = _cfg.console.max_running_tasks
+DEFAULT_COMMAND = _cfg.console.default_command
+TEMPLATE_FILE = Path(_cfg.console.template_file_abs)
 
 
 def _now() -> str:

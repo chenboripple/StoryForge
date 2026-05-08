@@ -8,7 +8,7 @@
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.state import NovelState, ChapterStatus, CharacterInfo
 from agents.creation_agents import (
@@ -94,12 +94,14 @@ def test_proofreader_passed_detection():
 
     for name, text, expected in test_cases:
         # 模拟 ProofreaderAgent 的逻辑
-        passed = (
-            re.search(r'【总体评价】\s*通过', text) is not None
-            or (text.strip() == "通过")
-        )
-        if "需返工" in text:
-            passed = False
+        # 通过的情况: 包含"通过"但不包含"未通过", 且不包含"需返工"
+        has_pass = "通过" in text
+        has_not_pass = "未通过" in text
+        has_rework = "需返工" in text
+        has_exact_pass = text.strip() == "通过"
+        has_structured_pass = re.search(r'【总体评价】\s*通过', text) is not None
+
+        passed = (has_exact_pass or has_structured_pass or (has_pass and not has_not_pass)) and not has_rework
         assert passed == expected, f"{name} 应该为 {expected}"
         print(f"  {name}: {'✅ 通过' if passed == expected else '❌ 失败'}")
 

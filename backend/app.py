@@ -26,7 +26,6 @@ from flask import Flask, jsonify, send_from_directory, request  # noqa: E402
 from flask_cors import CORS  # noqa: E402
 from werkzeug.utils import secure_filename  # noqa: E402
 
-from backend import storage  # noqa: E402
 from core.config import get_config  # noqa: E402
 from core.storage import StorageManager, StorageConfig  # noqa: E402
 from core.models import (  # noqa: E402

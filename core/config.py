@@ -58,11 +58,32 @@ class PipelineConfig:
 
 
 @dataclass
+class ConsoleConfig:
+    max_running_tasks: int = 3
+    default_command: str = "python examples/demo_pipeline.py"
+    template_file: str = "~/.storyforge/templates.json"
+
+    @property
+    def template_file_abs(self) -> str:
+        path = self.template_file
+        if path.startswith("~"):
+            return os.path.expanduser(path)
+        return path
+
+
+@dataclass
+class DebugConfig:
+    output_dir: str = "debug_output"
+
+
+@dataclass
 class StoryForgeConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+    console: ConsoleConfig = field(default_factory=ConsoleConfig)
+    debug: DebugConfig = field(default_factory=DebugConfig)
     config_path: Optional[str] = None     # 加载来源（None 表示使用默认值）
 
     @property
@@ -151,6 +172,8 @@ def load_config(path: Optional[str] = None) -> StoryForgeConfig:
     _merge_section(cfg.storage, raw.get("storage", {}))
     _merge_section(cfg.server, raw.get("server", {}))
     _merge_section(cfg.pipeline, raw.get("pipeline", {}))
+    _merge_section(cfg.console, raw.get("console", {}))
+    _merge_section(cfg.debug, raw.get("debug", {}))
 
     cfg.config_path = target_path
     return cfg
