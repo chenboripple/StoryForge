@@ -1,27 +1,46 @@
 import React, { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
+import {
+  Card,
+  Typography,
+  Tag,
+  Progress,
+  Button,
+  Empty,
+  Spin,
+  Alert,
+  Space,
+  Row,
+  Col,
+  List,
+  Avatar,
+  Collapse,
+  Badge,
+  Steps,
+  Statistic,
+  Divider,
+} from "antd";
+import {
+  ArrowLeftOutlined,
+  FileSearchOutlined,
+  RocketOutlined,
+  UserOutlined,
+  BookOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+} from "@ant-design/icons";
+
 import { api, labels } from "../api/client";
 
-const PIPELINE_STEPS = [
-  { key: "creation", label: "创作层" },
-  { key: "extraction", label: "萃取层" },
-  { key: "ip_generation", label: "IP 生成层" },
-];
+const { Title, Text, Paragraph } = Typography;
+const { Panel } = Collapse;
+const { Step } = Steps;
 
-function Pipeline({ stage }) {
-  return (
-    <div className="pipeline">
-      {PIPELINE_STEPS.map((step, i) => (
-        <React.Fragment key={step.key}>
-          <span className={`step ${stage === step.key ? "active" : ""}`}>
-            {step.label}
-          </span>
-          {i < PIPELINE_STEPS.length - 1 && <span className="arrow">→</span>}
-        </React.Fragment>
-      ))}
-    </div>
-  );
-}
+const PIPELINE_STEPS = [
+  { key: "creation", label: "创作层", description: "小说编写与管理" },
+  { key: "extraction", label: "萃取层", description: "提取关键信息" },
+  { key: "ip_generation", label: "IP 生成层", description: "生成衍生内容" },
+];
 
 function ChapterDetail({ novelId, chapterNum, onClose }) {
   const [data, setData] = useState(null);
@@ -36,78 +55,86 @@ function ChapterDetail({ novelId, chapterNum, onClose }) {
       .catch((err) => setError(err.message));
   }, [novelId, chapterNum]);
 
-  if (error) return <div className="error">章节加载失败：{error}</div>;
-  if (!data) return <div className="empty">加载章节中…</div>;
+  if (error)
+    return (
+      <Alert message="章节加载失败" description={error} type="error" />
+    );
+  if (!data) return <Spin tip="加载章节中…" />;
 
   return (
-    <div className="detail-section">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <h3 style={{ marginBottom: 0 }}>
-          第 {data.chapter_num} 章 · {labels.status(data.status)} ·{" "}
-          {data.word_count} 字
-        </h3>
-        <button onClick={onClose}>收起</button>
-      </div>
-
-      <div style={{ marginTop: 12 }}>
-        <div className="chapter-content">{data.content}</div>
-      </div>
+    <Card
+      title={
+        <Space>
+          <span>
+            第 {data.chapter_num} 章 · {labels.status(data.status)} ·{" "}
+            {data.word_count} 字
+          </span>
+        </Space>
+      }
+      extra={<Button onClick={onClose}>收起</Button>}
+    >
+      <Paragraph style={{ whiteSpace: "pre-wrap" }}>
+        {data.content}
+      </Paragraph>
 
       {data.reviews.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <h3>审稿记录</h3>
-          {data.reviews.map((r) => (
-            <div className="review-card" key={`r-${r.round}`}>
-              <div className="head">
-                <strong>
-                  第 {r.round} 轮 · {r.reviewer} · {r.score} 分
-                </strong>
-                <span
-                  className={`tag ${r.passed ? "green" : "yellow"}`}
-                  style={{ marginRight: 0 }}
-                >
-                  {r.passed ? "通过" : "未通过"}
-                </span>
-              </div>
-              <pre>{r.comments}</pre>
-            </div>
-          ))}
-        </div>
+        <>
+          <Divider />
+          <Title level={5}>审稿记录</Title>
+          <List
+            dataSource={data.reviews}
+            renderItem={(r) => (
+              <List.Item>
+                <List.Item.Meta
+                  title={
+                    <Space>
+                      <span>
+                        第 {r.round} 轮 · {r.reviewer} · {r.score} 分
+                      </span>
+                      <Tag color={r.passed ? "success" : "warning"}>
+                        {r.passed ? "通过" : "未通过"}
+                      </Tag>
+                    </Space>
+                  }
+                  description={<pre>{r.comments}</pre>}
+                />
+              </List.Item>
+            )}
+          />
+        </>
       )}
 
       {data.proofread_records.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <h3>校对记录</h3>
-          {data.proofread_records.map((p) => (
-            <div className="review-card" key={`p-${p.round}`}>
-              <div className="head">
-                <strong>
-                  第 {p.round} 轮 · {p.proofreader}
-                </strong>
-                <span
-                  className={`tag ${p.passed ? "green" : "yellow"}`}
-                  style={{ marginRight: 0 }}
-                >
-                  {p.passed ? "通过" : "需返工"}
-                </span>
-              </div>
-              <pre>{p.comments}</pre>
-            </div>
-          ))}
-        </div>
+        <>
+          <Divider />
+          <Title level={5}>校对记录</Title>
+          <List
+            dataSource={data.proofread_records}
+            renderItem={(p) => (
+              <List.Item>
+                <List.Item.Meta
+                  title={
+                    <Space>
+                      <span>第 {p.round} 轮 · {p.proofreader}</span>
+                      <Tag color={p.passed ? "success" : "warning"}>
+                        {p.passed ? "通过" : "需返工"}
+                      </Tag>
+                    </Space>
+                  }
+                  description={<pre>{p.comments}</pre>}
+                />
+              </List.Item>
+            )}
+          />
+        </>
       )}
-    </div>
+    </Card>
   );
 }
 
 export default function NovelDetail() {
   const { novelId } = useParams();
+  const navigate = useNavigate();
   const [novel, setNovel] = useState(null);
   const [chapters, setChapters] = useState(null);
   const [error, setError] = useState(null);
@@ -127,115 +154,199 @@ export default function NovelDetail() {
 
   if (error) {
     return (
-      <div>
-        <Link to="/" className="back-link">
-          ← 返回清单
-        </Link>
-        <div className="error">加载失败：{error}</div>
-      </div>
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/")}>
+          返回清单
+        </Button>
+        <Alert message="加载失败" description={error} type="error" />
+      </Space>
     );
   }
 
   if (!novel || !chapters) {
-    return <div className="empty">加载中…</div>;
+    return (
+      <div style={{ textAlign: "center", padding: "40px" }}>
+        <Spin size="large" />
+        <p>加载中…</p>
+      </div>
+    );
   }
 
   const total = chapters.length;
   const approved = chapters.filter((c) => c.status === "approved").length;
   const pct = total === 0 ? 0 : Math.round((approved / total) * 100);
 
+  const currentStepIndex = PIPELINE_STEPS.findIndex(
+    (s) => s.key === novel.current_stage
+  );
+
   return (
-    <div>
-      <Link to="/" className="back-link">
-        ← 返回清单
-      </Link>
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      {/* 返回按钮 */}
+      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/")}>
+        返回清单
+      </Button>
 
-      <div className="detail-header">
-        <h2>{novel.novel_title || "未命名"}</h2>
-        <span className="tag">{novel.genre || "未分类"}</span>
-        <span className="tag gray">{labels.stage(novel.current_stage)}</span>
-      </div>
-      <p style={{ color: "var(--text-muted)", marginTop: 0 }}>
-        {novel.concept || "—"}
-      </p>
+      {/* 头部信息 */}
+      <Card>
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space>
+            <Tag color="blue">{novel.genre || "未分类"}</Tag>
+            <Tag>{labels.stage(novel.current_stage)}</Tag>
+          </Space>
 
-      <div className="detail-section">
-        <h3>Pipeline 阶段</h3>
-        <Pipeline stage={novel.current_stage} />
-      </div>
+          <Title level={3} style={{ margin: 0 }}>
+            {novel.novel_title || "未命名"}
+          </Title>
 
-      <div className="detail-section">
-        <h3>创作进度</h3>
-        <div style={{ marginBottom: 8, fontSize: 13 }}>
-          {approved}/{total} 章已通过 · 当前推进至第 {novel.current_chapter} 章
-        </div>
-        <div className="progress">
-          <span style={{ width: `${pct}%` }} />
-        </div>
-      </div>
+          <Paragraph type="secondary" ellipsis={{ rows: 3 }}>
+            {novel.concept || "暂无描述"}
+          </Paragraph>
 
-      <div className="detail-section">
-        <h3>角色 ({novel.characters.length})</h3>
-        {novel.characters.length === 0 ? (
-          <div className="empty">尚未定义角色</div>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Statistic title="总章节" value={total} prefix={<BookOutlined />} />
+            </Col>
+            <Col span={8}>
+              <Statistic
+                title="已完成"
+                value={approved}
+                prefix={<CheckCircleOutlined />}
+              />
+            </Col>
+            <Col span={8}>
+              <Statistic
+                title="当前章节"
+                value={novel.current_chapter || 1}
+                prefix={<ClockCircleOutlined />}
+              />
+            </Col>
+          </Row>
+
+          <Progress
+            percent={pct}
+            status={pct === 100 ? "success" : "active"}
+            format={() => `${approved}/${total} 章 (${pct}%)`}
+          />
+        </Space>
+      </Card>
+
+      {/* Pipeline 阶段 */}
+      <Card title="Pipeline 阶段">
+        <Steps current={currentStepIndex}>
+          {PIPELINE_STEPS.map((step) => (
+            <Step
+              key={step.key}
+              title={step.label}
+              description={step.description}
+            />
+          ))}
+        </Steps>
+      </Card>
+
+      {/* 操作按钮 */}
+      <Card>
+        <Space>
+          <Button
+            type="primary"
+            icon={<FileSearchOutlined />}
+            onClick={() => navigate("/extraction")}
+          >
+            萃取信息
+          </Button>
+          <Button
+            icon={<RocketOutlined />}
+            onClick={() => navigate("/ip-generation")}
+          >
+            生成 IP
+          </Button>
+        </Space>
+      </Card>
+
+      {/* 角色信息 */}
+      <Card title={`角色 (${(novel.characters || []).length})`}>
+        {(novel.characters || []).length === 0 ? (
+          <Empty description="尚未定义角色" />
         ) : (
-          <div className="character-list">
-            {novel.characters.map((c) => (
-              <div className="character" key={c.name}>
-                <div className="name">
-                  {c.name}
-                  {c.age ? ` · ${c.age}岁` : ""}
-                </div>
-                <div className="small">{c.personality || "—"}</div>
-                {c.background && (
-                  <div className="small" style={{ marginTop: 4 }}>
-                    {c.background}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <List
+            grid={{ gutter: 16, xs: 1, sm: 2, lg: 3 }}
+            dataSource={novel.characters || []}
+            renderItem={(c) => (
+              <List.Item>
+                <Card size="small">
+                  <List.Item.Meta
+                    avatar={<Avatar icon={<UserOutlined />} />}
+                    title={c.name || c.id || "未知角色"}
+                    description={
+                      <Space direction="vertical" size={0}>
+                        {c.age && <Text type="secondary">{c.age}岁</Text>}
+                        <Text type="secondary">
+                          {c.personality || c.description || "—"}
+                        </Text>
+                      </Space>
+                    }
+                  />
+                </Card>
+              </List.Item>
+            )}
+          />
         )}
-      </div>
+      </Card>
 
-      <div className="detail-section">
-        <h3>章节 ({total})</h3>
+      {/* 章节列表 */}
+      <Card title={`章节 (${total})`}>
         {total === 0 ? (
-          <div className="empty">还没有章节</div>
+          <Empty description="还没有章节" />
         ) : (
-          chapters.map((c) => (
-            <div
-              key={c.chapter_num}
-              className="chapter-row"
-              onClick={() =>
-                setActiveChapter(
-                  activeChapter === c.chapter_num ? null : c.chapter_num
-                )
-              }
-            >
-              <span className="num">第 {c.chapter_num} 章</span>
-              <span className="preview">{c.preview || "—"}</span>
-              <span>
-                <span className={`tag ${labels.statusTone(c.status)}`}>
-                  {labels.status(c.status)}
-                </span>
-              </span>
-              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                {c.latest_score != null ? `${c.latest_score}分` : "—"} ·{" "}
-                {c.word_count}字
-              </span>
-            </div>
-          ))
+          <Collapse accordion>
+            {chapters.map((c) => (
+              <Panel
+                key={c.chapter_num}
+                header={
+                  <Space style={{ width: "100%", justifyContent: "space-between" }}>
+                    <Space>
+                      <Badge
+                        status={
+                          c.status === "approved"
+                            ? "success"
+                            : c.status === "draft"
+                            ? "processing"
+                            : "default"
+                        }
+                      />
+                      <span>第 {c.chapter_num} 章</span>
+                      <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+                        {c.title || c.preview || "—"}
+                      </Text>
+                    </Space>
+                    <Space>
+                      <Tag color={labels.statusTone(c.status)}>
+                        {labels.status(c.status)}
+                      </Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {c.word_count}字
+                      </Text>
+                    </Space>
+                  </Space>
+                }
+                onClick={() =>
+                  setActiveChapter(
+                    activeChapter === c.chapter_num ? null : c.chapter_num
+                  )
+                }
+              >
+                {activeChapter === c.chapter_num && (
+                  <ChapterDetail
+                    novelId={novelId}
+                    chapterNum={c.chapter_num}
+                    onClose={() => setActiveChapter(null)}
+                  />
+                )}
+              </Panel>
+            ))}
+          </Collapse>
         )}
-      </div>
-
-      {activeChapter !== null && (
-        <ChapterDetail
-          novelId={novelId}
-          chapterNum={activeChapter}
-          onClose={() => setActiveChapter(null)}
-        />
-      )}
-    </div>
+      </Card>
+    </Space>
   );
 }

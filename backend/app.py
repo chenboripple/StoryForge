@@ -76,7 +76,40 @@ def create_app() -> Flask:
         meta = sm.load_novel_meta(novel_id)
         if meta is None:
             return jsonify({"error": "novel not found", "novel_id": novel_id}), 404
-        return jsonify(meta.to_index_entry())
+        # Build response
+        result = meta.to_index_entry()
+        # Try to load characters
+        characters_list = []
+        try:
+            char_graph = sm.load_characters(novel_id)
+            if char_graph:
+                if hasattr(char_graph, 'characters') and char_graph.characters:
+                    for c in char_graph.characters:
+                        char_dict = {}
+                        # 优先尝试 to_dict
+                        if hasattr(c, 'to_dict'):
+                            try:
+                                char_dict = c.to_dict()
+                            except Exception:
+                                pass
+                        # 如果没有，则手动提取字段
+                        if not char_dict:
+                            char_dict = {
+                                'id': getattr(c, 'character_id', getattr(c, 'id', '')),
+                                'character_id': getattr(c, 'character_id', ''),
+                                'name': getattr(c, 'name', ''),
+                                'description': getattr(c, 'description', ''),
+                                'personality': getattr(c, 'personality', ''),
+                                'background': getattr(c, 'background', ''),
+                                'age': getattr(c, 'age', None),
+                                'gender': getattr(c, 'gender', ''),
+                            }
+                        characters_list.append(char_dict)
+        except Exception as e:
+            # 错误时不添加任何字符，但也不崩溃
+            pass
+        result['characters'] = characters_list
+        return jsonify(result)
 
     @app.get("/api/novels/<novel_id>/chapters")
     def list_chapters(novel_id: str):
