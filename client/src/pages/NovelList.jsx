@@ -12,16 +12,10 @@ import {
   Spin,
   Alert,
   Space,
-  Modal,
-  Form,
-  Input,
-  Select,
-  message,
 } from "antd";
 import {
   BookOutlined,
   ImportOutlined,
-  PlusOutlined,
   EyeOutlined,
   EditOutlined,
 } from "@ant-design/icons";
@@ -29,54 +23,18 @@ import {
 import { api, labels } from "../api/client";
 
 const { Title, Text, Paragraph } = Typography;
-const { Option } = Select;
 
 export default function NovelList() {
   const navigate = useNavigate();
   const [novels, setNovels] = useState(null);
   const [error, setError] = useState(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [form] = Form.useForm();
-  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    loadNovels();
-  }, []);
-
-  const loadNovels = () => {
     api
       .listNovels()
       .then(setNovels)
       .catch((err) => setError(err.message));
-  };
-
-  const handleCreateNovel = async (values) => {
-    setCreating(true);
-    try {
-      const result = await api.createNovel({
-        novel_id: values.novel_id,
-        novel_title: values.novel_title,
-        genre: values.genre,
-        concept: values.concept,
-        target_word_count: values.target_word_count || 3000,
-      });
-
-      if (result.success) {
-        message.success(`小说「${result.novel_title}」创建成功！`);
-        setIsModalOpen(false);
-        form.resetFields();
-        loadNovels();
-        // 跳转到新创建的小说详情页
-        navigate(`/novels/${result.novel_id}`);
-      } else {
-        message.error(result.error || "创建失败");
-      }
-    } catch (err) {
-      message.error(`创建失败: ${err.message}`);
-    } finally {
-      setCreating(false);
-    }
-  };
+  }, []);
 
   if (error) {
     return (
@@ -113,10 +71,10 @@ export default function NovelList() {
         <Col>
           <Space>
             <Button
-              icon={<PlusOutlined />}
-              onClick={() => setIsModalOpen(true)}
+              icon={<EditOutlined />}
+              onClick={() => navigate("/wizard")}
             >
-              创建新小说
+              创作新小说
             </Button>
             <Button
               type="primary"
@@ -136,10 +94,10 @@ export default function NovelList() {
           image={Empty.PRESENTED_IMAGE_SIMPLE}
         >
           <Space>
-            <Button onClick={() => setIsModalOpen(true)}>
-              创建新小说
+            <Button type="primary" size="large" onClick={() => navigate("/wizard")} icon={<EditOutlined />}>
+              创作新小说
             </Button>
-            <Button type="primary" onClick={() => navigate("/import")}>
+            <Button onClick={() => navigate("/import")} icon={<ImportOutlined />}>
               导入小说
             </Button>
           </Space>
@@ -203,104 +161,6 @@ export default function NovelList() {
           })}
         </Row>
       )}
-
-      {/* 创建新小说弹窗 */}
-      <Modal
-        title="创建新小说"
-        open={isModalOpen}
-        onCancel={() => {
-          setIsModalOpen(false);
-          form.resetFields();
-        }}
-        footer={null}
-        width={600}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleCreateNovel}
-          style={{ marginTop: 16 }}
-        >
-          <Form.Item
-            name="novel_id"
-            label="小说ID"
-            rules={[
-              { required: true, message: "请输入小说ID" },
-              { pattern: /^[a-zA-Z0-9_-]+$/, message: "只能使用字母、数字、下划线和横线" },
-            ]}
-            extra="用于URL和文件系统，建议使用英文"
-          >
-            <Input placeholder="例如：my-novel-001" />
-          </Form.Item>
-
-          <Form.Item
-            name="novel_title"
-            label="小说标题"
-            rules={[{ required: true, message: "请输入小说标题" }]}
-          >
-            <Input placeholder="请输入小说标题" />
-          </Form.Item>
-
-          <Form.Item
-            name="genre"
-            label="类型"
-            initialValue="未分类"
-          >
-            <Select placeholder="请选择类型">
-              <Option value="未分类">未分类</Option>
-              <Option value="科幻">科幻</Option>
-              <Option value="玄幻">玄幻</Option>
-              <Option value="都市">都市</Option>
-              <Option value="历史">历史</Option>
-              <Option value="悬疑">悬疑</Option>
-              <Option value="言情">言情</Option>
-              <Option value="年代重生">年代重生</Option>
-              <Option value="末日科幻">末日科幻</Option>
-              <Option value="古代权谋">古代权谋</Option>
-              <Option value="其他">其他</Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="concept"
-            label="一句话概念"
-          >
-            <Input.TextArea
-              rows={3}
-              placeholder="用一句话描述你的小说核心概念"
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="target_word_count"
-            label="目标字数"
-            initialValue={3000}
-          >
-            <Input type="number" placeholder="目标字数" />
-          </Form.Item>
-
-          <Form.Item style={{ marginBottom: 0, textAlign: "right" }}>
-            <Space>
-              <Button
-                onClick={() => {
-                  setIsModalOpen(false);
-                  form.resetFields();
-                }}
-              >
-                取消
-              </Button>
-              <Button
-                type="primary"
-                htmlType="submit"
-                loading={creating}
-                icon={<EditOutlined />}
-              >
-                创建
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-      </Modal>
     </Space>
   );
 }

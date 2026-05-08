@@ -34,6 +34,10 @@ from core.models import (  # noqa: E402
     Review, ReviewRecord, ReviewVerdict,
     Proofread, ProofreadRecord,
 )
+from core.ai_assistant import (  # noqa: E402
+    GenerationRequest, GenerationResponse,
+    generate_suggestion,
+)
 
 
 def _get_sm() -> StorageManager:
@@ -69,6 +73,31 @@ def create_app() -> Flask:
     def list_novels():
         sm = _get_sm()
         return jsonify(sm.list_novels())
+
+    @app.post("/api/ai/generate")
+    def ai_generate():
+        """AI 创作建议生成"""
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "缺少请求数据"}), 400
+        
+        req = GenerationRequest(
+            prompt=data.get("prompt", ""),
+            step=data.get("step", "concept"),
+            context=data.get("context", {}),
+            temperature=data.get("temperature", 0.7),
+        )
+        
+        resp = generate_suggestion(req)
+        
+        if resp.success:
+            return jsonify({
+                "success": True,
+                "content": resp.content,
+                "suggestions": resp.suggestions,
+            })
+        else:
+            return jsonify({"error": resp.error}), 500
 
     @app.post("/api/novels")
     def create_novel():

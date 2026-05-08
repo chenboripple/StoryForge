@@ -13,6 +13,7 @@ import Home from "./pages/Home";
 import NovelList from "./pages/NovelList";
 import NovelDetail from "./pages/NovelDetail";
 import NovelImport from "./pages/NovelImport";
+import NovelWizard from "./pages/NovelWizard";
 import Extraction from "./pages/Extraction";
 import IPGeneration from "./pages/IPGeneration";
 
@@ -82,7 +83,7 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/novels" element={<NovelList />} />
               <Route path="/novels/:novelId" element={<NovelDetail />} />
-              <Route path="/import" element={<NovelImport />} />
+              <Route path="/wizard" element={<NovelWizard />} />
               <Route path="/extraction" element={<Extraction />} />
               <Route path="/ip-generation" element={<IPGeneration />} />
               <Route path="*" element={<div>页面不存在</div>} />
