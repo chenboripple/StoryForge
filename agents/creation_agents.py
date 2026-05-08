@@ -12,6 +12,7 @@ from core.schema import (
     ReviewResult, ProofreadResult, ChapterContent,
     REVIEW_JSON_PROMPT, PROOFREAD_JSON_PROMPT
 )
+from core.models import ChapterStatus
 from core.prompt_assembler import PromptAssembler
 
 
@@ -199,7 +200,6 @@ class WriterAgent(BaseAgent):
                     )
 
         # 6. 更新状态
-        from core.state import ChapterStatus
         chapter_content = ChapterContent(
             text=chapter_text,
             version=1,
@@ -446,16 +446,19 @@ class ReviewerAgent(BaseAgent):
     
     def _parse_review_result(self, result_dict):
         """解析 JSON 结果为 ReviewResult 对象"""
-        from core.schema import DimensionScore, ReviewIssue, ReviewVerdict
-        
+        from core.models.review import DimensionScore, ReviewIssue, ReviewVerdict
+
         dimensions = [
             DimensionScore(**d) for d in result_dict.get("dimensions", [])
         ]
-        issues = [
-            ReviewIssue(**i) for i in result_dict.get("issues", [])
-        ]
+        issues = []
+        for i in result_dict.get("issues", []):
+            issue_data = i.copy()
+            if "type" in issue_data and "issue_type" not in issue_data:
+                issue_data["issue_type"] = issue_data.pop("type")
+            issues.append(ReviewIssue(**issue_data))
         verdict = ReviewVerdict(result_dict.get("verdict", "revise"))
-        
+
         review = ReviewResult(
             total_score=result_dict.get("total_score", 70),
             dimensions=dimensions,
@@ -473,7 +476,8 @@ class ReviewerAgent(BaseAgent):
     
     def _update_state_with_review(self, state, review):
         """将审稿结果更新到状态"""
-        from core.state import ReviewRecord, ChapterStatus
+        from core.state import ReviewRecord
+        from core.models import ChapterStatus
         
         record = ReviewRecord(
             round=state.review_round + 1,
@@ -526,7 +530,6 @@ class ReviserAgent(BaseAgent):
             message_bus=message_bus,
             state=state
         )
-        self.persona.tone += "（当前任务：根据编辑意见修改，保持开放心态）"
         self.prompt_assembler = prompt_assembler or PromptAssembler()
 
     def invoke(self, state):
@@ -570,7 +573,7 @@ class ReviserAgent(BaseAgent):
         revised_text = self._call_llm_raw(prompt)
 
         # 5. 更新状态
-        from core.state import ChapterStatus
+        from core.models import ChapterStatus
         from core.schema import ChapterContent
 
         state.chapters[state.current_chapter] = ChapterContent(
@@ -734,25 +737,29 @@ class ProofreaderAgent(BaseAgent):
         )
     
     def _parse_proofread_result(self, result_dict):
-        from core.schema import ProofreadIssue
-        
-        issues = [
-            ProofreadIssue(**i) for i in result_dict.get("issues", [])
-        ]
-        
+        from core.models.proofread import ProofreadIssue
+
+        issues = []
+        for i in result_dict.get("issues", []):
+            issue_data = i.copy()
+            if "type" in issue_data and "issue_type" not in issue_data:
+                issue_data["issue_type"] = issue_data.pop("type")
+            issues.append(ProofreadIssue(**issue_data))
+
         proofread = ProofreadResult(
             passed=result_dict.get("passed", False),
             issues=issues,
             summary=result_dict.get("summary", "")
         )
-        
+
         # 添加终审判定
         proofread.verdict = result_dict.get("verdict", "需返修")
-        
+
         return proofread
     
     def _update_state_with_proofread(self, state, proofread):
-        from core.state import ChapterStatus, ReviewRecord
+        from core.state import ReviewRecord
+        from core.models import ChapterStatus
 
         state.proofread_results.setdefault(state.current_chapter, []).append(proofread)
 

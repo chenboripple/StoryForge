@@ -47,6 +47,24 @@ export const api = {
     request(
       `/api/novels/${encodeURIComponent(novelId)}/chapters/${chapterNum}`
     ),
+  listImportFormats: () => request("/api/import/formats"),
+  uploadFile: (formData) =>
+    fetch("/api/import/upload", {
+      method: "POST",
+      body: formData,
+    }).then((res) => {
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json();
+    }),
+  saveImported: (data) =>
+    fetch("/api/import/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }).then((res) => {
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json();
+    }),
 };
 
 export const labels = {

@@ -230,15 +230,66 @@ def main(save_to_storage: bool = False):
         for r in result.reviews[1]:
             print(f"  第{r.round}轮 - {r.reviewer}: {r.score}分 {'✅' if r.passed else '❌'}")
 
-    # 6. 可选：保存到 storage 供 Web 界面展示
+    # 6. 可选：保存到 StorageManager 供 Web 界面展示
     if save_to_storage:
         print("\n" + "=" * 50)
-        print("保存到 Storage")
+        print("保存到 StorageManager（新版分文件格式）")
         print("=" * 50)
-        from backend import storage
-        storage.save_novel(result)
-        print(f"已保存：{result.novel_id}")
-        print("可通过 Web 界面查看：http://localhost:3000")
+        from core.storage import get_storage_manager
+        from core.models import (
+            Chapter, ChapterStatus,
+            Review, ReviewRecord, ReviewVerdict,
+        )
+
+        sm = get_storage_manager()
+
+        # 保存小说元数据
+        meta = sm.create_novel(
+            novel_id=result.novel_id,
+            title=result.novel_title,
+            genre=result.genre,
+            concept=result.concept,
+            target_word_count=result.target_word_count,
+        )
+
+        # 保存章节
+        chapters = {}
+        for ch_num, ch_obj in result.chapters.items():
+            content = getattr(ch_obj, "text", ch_obj) if hasattr(ch_obj, "text") else str(ch_obj)
+            chapters[ch_num] = Chapter(
+                novel_id=result.novel_id,
+                chapter_num=ch_num,
+                title=f"第{ch_num}章",
+                content=content,
+                status=result.chapter_status.get(ch_num, ChapterStatus.PENDING),
+                word_count=len(content),
+            )
+        sm.save_chapters(result.novel_id, chapters)
+
+        # 保存审稿记录
+        reviews = {}
+        for ch_num, review_list in result.reviews.items():
+            review = Review(novel_id=result.novel_id, chapter_num=ch_num)
+            for r in review_list:
+                record = ReviewRecord(
+                    novel_id=result.novel_id,
+                    chapter_num=ch_num,
+                    round=r.round,
+                    reviewer=r.reviewer,
+                    total_score=r.score,
+                    summary=r.comments,
+                    passed=r.passed,
+                    timestamp=r.timestamp,
+                )
+                review.add_record(record)
+            reviews[ch_num] = review
+        sm.save_reviews(result.novel_id, reviews)
+
+        print(f"✅ 已保存小说：{result.novel_id}")
+        print(f"   章节数：{len(chapters)}")
+        print(f"   审稿记录：{sum(len(r.records) for r in reviews.values())} 条")
+        print(f"   可通过 Flask 后端查看：python backend/app.py")
+        print(f"   API 端点：GET /api/novels/{result.novel_id}/chapters")
 
 
 if __name__ == "__main__":

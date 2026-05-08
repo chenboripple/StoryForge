@@ -15,104 +15,13 @@ import json
 import os
 from datetime import datetime
 
-
-@dataclass
-class CharacterIP:
-    """人物 IP 档案"""
-    character_id: str  # 拼音+下划线，如"zhang_san"
-    name: str
-    role: str  # "protagonist" | "supporting" | "antagonist"
-    appearance: Dict[str, str] = field(default_factory=dict)
-    # appearance 结构：
-    # {
-    #   "basic": "基本描述",
-    #   "face": "面部细节",
-    #   "clothing": "服饰特点",
-    #   "posture": "姿态特征",
-    #   "visual_tags": ["关键词1", "关键词2"]
-    # }
-    personality: Dict[str, Any] = field(default_factory=dict)
-    # personality 结构：
-    # {
-    #   "core": "核心性格",
-    #   "traits": ["特质1", "特质2"],
-    #   "strengths": ["优点1"],
-    #   "weaknesses": ["缺点1"],
-    #   "fears": ["恐惧1"],
-    #   "motivations": ["动机1"]
-    # }
-    background: str = ""
-    relationships: List[Dict] = field(default_factory=list)
-    # relationships: [{"name": "关系对象", "relation": "关系类型", "description": "详细说明"}]
-    character_arc: Dict[str, str] = field(default_factory=dict)
-    # character_arc: {"start": "初始状态", "turning_points": [], "end": "最终状态"}
-    famous_quotes: List[str] = field(default_factory=list)
-    key_scenes: List[Dict] = field(default_factory=list)
-    # key_scenes: [{"chapter": 1, "description": "关键场景描述"}]
-    tags: List[str] = field(default_factory=list)
-    first_appearance: int = 0
-    last_appearance: int = 0
-    total_scenes: int = 0
-
-
-@dataclass
-class RelationshipEdge:
-    """关系边（用于图谱）"""
-    source: str  # 源角色 ID
-    target: str  # 目标角色 ID
-    relation_type: str  # "friend" | "enemy" | "family" | "romantic" | "mentor" | "rival"
-    description: str
-    intensity: int = 5  # 关系强度 1-10
-    evolution: List[Dict] = field(default_factory=list)
-    # evolution: [{"chapter": 1, "change": "关系变化描述"}]
-
-
-@dataclass
-class SceneSetting:
-    """场景设定"""
-    scene_id: str
-    name: str
-    location: str
-    chapter: int
-    description: str
-    atmosphere: str  # 氛围描述
-    visual_references: List[str] = field(default_factory=list)  # 视觉参考关键词
-    significance: str = ""  # 场景重要性说明
-    props_in_scene: List[str] = field(default_factory=list)  # 场景中的关键道具
-    characters_present: List[str] = field(default_factory=list)  # 在场角色
-
-
-@dataclass
-class DerivedSetting:
-    """衍生设定"""
-    setting_type: str  # "item" | "spell" | "faction" | "creature" | "rule"
-    name: str
-    description: str
-    origin: str = ""  # 来源说明
-    properties: Dict = field(default_factory=dict)
-    related_characters: List[str] = field(default_factory=list)
-    first_appearance: int = 0
-    tags: List[str] = field(default_factory=list)
-
-
-@dataclass
-class StoryBible:
-    """故事 Bible"""
-    title: str
-    version: str = "1.0"
-    created_at: str = ""
-    updated_at: str = ""
-    logline: str = ""  # 一句话梗概
-    core_concept: str = ""  # 核心概念
-    themes: List[str] = field(default_factory=list)
-    tone: str = ""
-    target_audience: str = ""
-    world_overview: str = ""
-    characters: List[CharacterIP] = field(default_factory=list)
-    relationships: List[RelationshipEdge] = field(default_factory=list)
-    key_scenes: List[SceneSetting] = field(default_factory=list)
-    derived_settings: List[DerivedSetting] = field(default_factory=list)
-    chapter_summaries: Dict[int, str] = field(default_factory=dict)
+from core.models.ip_assets import (
+    CharacterIP,
+    RelationshipEdge,
+    SceneSetting,
+    DerivedSetting,
+    StoryBible,
+)
 
 
 class IPGenerator:
@@ -219,7 +128,7 @@ class IPGenerator:
 {sample_content}
 
 【任务】
-请生成以下内容，以JSON格式返回：
+请生成以下内容，以 JSON 格式返回：
 
 {{
     "logline": "一句话梗概（30-50字）",
@@ -229,7 +138,7 @@ class IPGenerator:
     "world_overview": "世界观概述（200-300字）"
 }}
 
-只输出JSON，不包含其他说明：
+只输出 JSON，不包含其他说明：
 """
 
         try:
@@ -294,10 +203,10 @@ class IPGenerator:
 {sample_content}
 
 【任务】
-请为 "{character_name}" 生成详细的人物档案，以JSON格式返回：
+请为 "{character_name}" 生成详细的人物档案，以 JSON 格式返回：
 
 {{
-    "character_id": "拼音标识（如zhang_san）",
+    "character_id": "拼音标识（如 zhang_san）",
     "name": "{character_name}",
     "role": "角色定位（protagonist|supporting|antagonist|cameo）",
     "appearance": {{
@@ -327,7 +236,7 @@ class IPGenerator:
     "last_appearance": 1
 }}
 
-只输出JSON，不包含其他说明：
+只输出 JSON，不包含其他说明：
 """
 
         try:
@@ -374,21 +283,21 @@ class IPGenerator:
 {sample_content}
 
 【任务】
-请分析上述人物之间的关系，以JSON格式返回：
+请分析上述人物之间的关系，以 JSON 格式返回：
 
 {{
     "relationships": [
         {{
-            "source": "人物A的name",
-            "target": "人物B的name",
+            "source": "人物 A 的 name",
+            "target": "人物 B 的 name",
             "relation_type": "关系类型（friend|enemy|family|romantic|mentor|rival）",
             "description": "关系详细描述",
-            "intensity": 关系强度1-10
+            "intensity": 5
         }}
     ]
 }}
 
-只输出JSON，不包含其他说明：
+只输出 JSON，不包含其他说明：
 """
 
         try:
@@ -427,7 +336,7 @@ class IPGenerator:
 {sample_content}
 
 【任务】
-请提取3-5个最关键的场景，以JSON格式返回：
+请提取 3-5 个最关键的场景，以 JSON 格式返回：
 
 {{
     "scenes": [
@@ -435,7 +344,7 @@ class IPGenerator:
             "scene_id": "场景标识",
             "name": "场景名称",
             "location": "地点",
-            "chapter": 章节号,
+            "chapter": 1,
             "description": "场景详细描述",
             "atmosphere": "氛围描述",
             "visual_references": ["视觉参考1", "视觉参考2"],
@@ -446,7 +355,7 @@ class IPGenerator:
     ]
 }}
 
-只输出JSON，不包含其他说明：
+只输出 JSON，不包含其他说明：
 """
 
         try:
@@ -491,7 +400,7 @@ class IPGenerator:
 {sample_content}
 
 【任务】
-请提取重要的衍生设定（道具、法术、势力、生物、规则等），以JSON格式返回：
+请提取重要的衍生设定（道具、法术、势力、生物、规则等），以 JSON 格式返回：
 
 {{
     "settings": [
@@ -508,7 +417,7 @@ class IPGenerator:
     ]
 }}
 
-只输出JSON，不包含其他说明：
+只输出 JSON，不包含其他说明：
 """
 
         try:
@@ -583,7 +492,10 @@ class IPGenerator:
                         names.add(char.name)
                 if hasattr(analysis, 'events'):
                     for event in analysis.events:
-                        names.update(event.characters_involved)
+                        if isinstance(event, dict):
+                            names.update(event.get('characters_involved', []))
+                        else:
+                            names.update(getattr(event, 'characters_involved', []))
 
         # 如果没有分析结果或结果太少，用简单启发式
         if len(names) < 3 and self.llm_client:
@@ -594,7 +506,7 @@ class IPGenerator:
 
     def _extract_names_with_llm(self, sample_content: str) -> List[str]:
         """用 LLM 提取角色名"""
-        prompt = f"""请从以下文本中提取所有人物姓名，只返回JSON列表：
+        prompt = f"""请从以下文本中提取所有人物姓名，只返回 JSON 列表：
 
 {sample_content}
 
@@ -634,75 +546,11 @@ class IPGenerator:
         """保存 Story Bible 到文件"""
         bible_path = os.path.join(self.output_dir, f"{bible.title}_story_bible.json")
 
-        # 转换为可序列化的 dict
-        bible_dict = {
-            "title": bible.title,
-            "version": bible.version,
-            "created_at": bible.created_at,
-            "updated_at": bible.updated_at,
-            "logline": bible.logline,
-            "core_concept": bible.core_concept,
-            "themes": bible.themes,
-            "tone": bible.tone,
-            "world_overview": bible.world_overview,
-            "characters": [
-                {
-                    "character_id": c.character_id,
-                    "name": c.name,
-                    "role": c.role,
-                    "appearance": c.appearance,
-                    "personality": c.personality,
-                    "background": c.background,
-                    "character_arc": c.character_arc,
-                    "famous_quotes": c.famous_quotes,
-                    "tags": c.tags,
-                    "first_appearance": c.first_appearance,
-                    "last_appearance": c.last_appearance
-                }
-                for c in bible.characters
-            ],
-            "relationships": [
-                {
-                    "source": r.source,
-                    "target": r.target,
-                    "relation_type": r.relation_type,
-                    "description": r.description,
-                    "intensity": r.intensity
-                }
-                for r in bible.relationships
-            ],
-            "key_scenes": [
-                {
-                    "scene_id": s.scene_id,
-                    "name": s.name,
-                    "location": s.location,
-                    "chapter": s.chapter,
-                    "description": s.description,
-                    "atmosphere": s.atmosphere,
-                    "visual_references": s.visual_references,
-                    "significance": s.significance
-                }
-                for s in bible.key_scenes
-            ],
-            "derived_settings": [
-                {
-                    "setting_type": s.setting_type,
-                    "name": s.name,
-                    "description": s.description,
-                    "origin": s.origin,
-                    "properties": s.properties,
-                    "tags": s.tags
-                }
-                for s in bible.derived_settings
-            ],
-            "chapter_summaries": bible.chapter_summaries
-        }
-
+        # 使用 BaseModel 的 to_dict 方法
         try:
+            bible_dict = bible.to_dict()
             with open(bible_path, 'w', encoding='utf-8') as f:
                 json.dump(bible_dict, f, ensure_ascii=False, indent=2)
-
             print(f"  💾 Story Bible 已保存: {bible_path}")
-
         except Exception as e:
             print(f"  ⚠️ 保存 Story Bible 失败: {e}")

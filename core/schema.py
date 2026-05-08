@@ -1,6 +1,9 @@
 """
 StoryForge - 结构化输出 Schema
 定义所有 LLM 输出的数据结构，确保类型安全
+
+NOTE: This file now only contains LLM-output wrapper types.
+Storage model types are in core.models.* (e.g., core.models.review, core.models.proofread)
 """
 
 from dataclasses import dataclass, field
@@ -8,42 +11,19 @@ from typing import List, Dict, Optional, Any
 from enum import Enum
 import json
 
-
-class ReviewVerdict(Enum):
-    """审稿结论"""
-    PASS = "pass"           # 通过
-    REVISE = "revise"       # 需修改
-    REWRITE = "rewrite"     # 重写
-
-
-@dataclass
-class DimensionScore:
-    """维度评分"""
-    name: str
-    score: int          # 0-100
-    weight: float       # 权重（如 0.3）
-    comment: str = ""   # 该维度评语
-
-
-@dataclass
-class ReviewIssue:
-    """审稿问题"""
-    severity: str       # "fatal" | "improvement" | "highlight"
-    location: str       # 问题位置（如"第3段"）
-    description: str    # 问题描述
-    suggestion: str     # 修改建议
-    type: str = ""      # 问题类型（可选）
+from core.models.review import ReviewVerdict, DimensionScore, ReviewIssue
+from core.models.proofread import ProofreadIssue
 
 
 @dataclass
 class ReviewResult:
-    """结构化审稿结果"""
+    """结构化审稿结果 (LLM output wrapper)"""
     total_score: int
     dimensions: List[DimensionScore]
     issues: List[ReviewIssue]
     verdict: ReviewVerdict
-    summary: str = ""   # 总体评语
-    
+    summary: str = ""
+
     def to_json(self) -> str:
         """序列化为 JSON"""
         return json.dumps({
@@ -53,76 +33,80 @@ class ReviewResult:
                 for d in self.dimensions
             ],
             "issues": [
-                {"severity": i.severity, "location": i.location, 
-                 "description": i.description, "suggestion": i.suggestion}
+                {"severity": i.severity, "location": i.location, "description": i.description,
+                 "suggestion": i.suggestion, "issue_type": i.issue_type}
                 for i in self.issues
             ],
             "verdict": self.verdict.value,
             "summary": self.summary
         }, ensure_ascii=False, indent=2)
-    
+
     @classmethod
     def from_json(cls, json_str: str) -> "ReviewResult":
         """从 JSON 反序列化"""
         data = json.loads(json_str)
+        issues = []
+        for i in data.get("issues", []):
+            # Handle both "type" (old schema) and "issue_type" (new models)
+            issue_data = i.copy()
+            if "type" in issue_data and "issue_type" not in issue_data:
+                issue_data["issue_type"] = issue_data.pop("type")
+            issues.append(ReviewIssue(**issue_data))
         return cls(
             total_score=data["total_score"],
-            dimensions=[DimensionScore(**d) for d in data["dimensions"]],
-            issues=[ReviewIssue(**i) for i in data["issues"]],
+            dimensions=[DimensionScore(**d) for d in data.get("dimensions", [])],
+            issues=issues,
             verdict=ReviewVerdict(data["verdict"]),
             summary=data.get("summary", "")
         )
 
 
 @dataclass
-class ProofreadIssue:
-    """校对问题"""
-    type: str           # "typo" | "consistency" | "logic" | "format"
-    location: str       # 位置
-    original: str       # 原文
-    correction: str     # 修改建议
-    explanation: str = ""  # 说明
-
-
-@dataclass
 class ProofreadResult:
-    """结构化校对结果"""
+    """结构化校对结果 (LLM output wrapper)"""
     passed: bool
     issues: List[ProofreadIssue]
     summary: str = ""
-    
+
     def to_json(self) -> str:
         return json.dumps({
             "passed": self.passed,
             "issues": [
-                {"type": i.type, "location": i.location, "original": i.original,
+                {"issue_type": i.type, "location": i.location, "original": i.original,
                  "correction": i.correction, "explanation": i.explanation}
                 for i in self.issues
             ],
             "summary": self.summary
         }, ensure_ascii=False, indent=2)
-    
+
     @classmethod
     def from_json(cls, json_str: str) -> "ProofreadResult":
         data = json.loads(json_str)
+        issues = []
+        for i in data.get("issues", []):
+            # Handle both "type" (old schema) and "issue_type" (new models)
+            issue_data = i.copy()
+            if "type" in issue_data and "issue_type" not in issue_data:
+                issue_data["issue_type"] = issue_data.pop("type")
+            issues.append(ProofreadIssue(**issue_data))
         return cls(
             passed=data["passed"],
-            issues=[ProofreadIssue(**i) for i in data["issues"]],
+            issues=issues,
             summary=data.get("summary", "")
         )
 
 
 @dataclass
 class ChapterContent:
-    """章节内容（替代简单的 str）"""
+    """章节内容（运行时 wrapper）"""
     text: str
     version: int = 1
     word_count: int = 0
     generated_at: str = ""
     modified_at: str = ""
-    
+
     def __post_init__(self):
-        if self.word_count == 0:
+        if self.word_count == 0 and self.text:
             self.word_count = len(self.text)
 
 
@@ -139,9 +123,9 @@ REVIEW_JSON_PROMPT = """
     {"name": "市场潜力", "score": <0-100>, "weight": 0.1, "comment": "..."}
   ],
   "issues": [
-    {"severity": "fatal", "location": "第X段", "description": "...", "suggestion": "..."},
-    {"severity": "improvement", "location": "第X段", "description": "...", "suggestion": "..."},
-    {"severity": "highlight", "location": "第X段", "description": "...", "suggestion": "保持"}
+    {"severity": "fatal", "location": "第X段", "description": "...", "suggestion": "...", "issue_type": ""},
+    {"severity": "improvement", "location": "第X段", "description": "...", "suggestion": "...", "issue_type": ""},
+    {"severity": "highlight", "location": "第X段", "description": "...", "suggestion": "保持", "issue_type": ""}
   ],
   "verdict": "pass|revise|rewrite",
   "summary": "总体评语"
@@ -159,7 +143,7 @@ PROOFREAD_JSON_PROMPT = """
 {
   "passed": true|false,
   "issues": [
-    {"type": "typo|consistency|logic|format", "location": "第X段", 
+    {"issue_type": "typo|consistency|logic|format", "location": "第X段",
      "original": "原文", "correction": "修改", "explanation": "说明"}
   ],
   "summary": "总体评价"

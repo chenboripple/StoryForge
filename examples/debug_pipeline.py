@@ -14,11 +14,11 @@ from core.state import NovelState, CharacterInfo
 from pipeline.novel_pipeline import create_pipeline
 from core.memory import StoryMemory
 from core.prompt_assembler import PromptAssembler
-from core.settings import get_settings
+from core.config import get_config
 
 
-settings = get_settings()
-DEBUG_DIR = str(settings.debug.output_dir)
+config = get_config()
+DEBUG_DIR = config.debug.output_dir
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
 
@@ -276,7 +276,7 @@ def main():
         novel_id="debug_001",
         novel_title="熵塔",
         genre="科幻末日",
-        target_word_count=settings.pipeline.default_target_word_count,
+        target_word_count=config.pipeline.default_target_word_count,
         current_chapter=1,
         concept="末日后的世界，主角发现父亲参与的禁忌实验",
         outline="""

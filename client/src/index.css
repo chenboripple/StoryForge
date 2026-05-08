@@ -350,3 +350,289 @@ button:hover {
   color: var(--text-muted);
   font-size: 12px;
 }
+
+/* ==================== 导入页面样式 ==================== */
+
+.app-nav {
+  display: flex;
+  gap: 16px;
+}
+
+.nav-link {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nav-link:hover, .nav-link.active {
+  color: var(--text);
+  background: var(--bg-card);
+  text-decoration: none;
+}
+
+.novel-import {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.novel-import h2 {
+  font-size: 22px;
+  margin: 0 0 8px;
+}
+
+.hint {
+  color: var(--text-muted);
+  margin: 0 0 24px;
+  font-size: 13px;
+}
+
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 48px 24px;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.upload-zone.drag-active {
+  border-color: var(--accent);
+  background: #192230;
+}
+
+.upload-zone.has-file {
+  border-style: solid;
+  border-color: var(--accent-soft);
+}
+
+.upload-label {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.upload-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.file-name {
+  font-weight: 600;
+}
+
+.file-size {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.save-actions {
+  justify-content: center;
+  margin-top: 32px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d1117;
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: #8cc5ff;
+}
+
+.btn-secondary {
+  background: var(--bg-card);
+}
+
+.btn-danger {
+  background: #3d1d1d;
+  border-color: #6d2828;
+  color: var(--red);
+}
+
+.btn-large {
+  padding: 12px 32px;
+  font-size: 16px;
+}
+
+.error-box {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid #6d2828;
+  border-radius: 8px;
+  background: #3d1d1d20;
+  color: var(--red);
+}
+
+.error-box pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+
+.import-result {
+  margin-top: 24px;
+}
+
+.import-result h3 {
+  font-size: 18px;
+  margin: 0 0 16px;
+}
+
+.meta-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.form-row label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.form-row input,
+.form-row select,
+.form-row textarea {
+  background: #11141a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  font: inherit;
+}
+
+.form-row input:focus,
+.form-row select:focus,
+.form-row textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.stats-bar {
+  display: flex;
+  gap: 24px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.stats-bar .warning {
+  color: var(--yellow);
+}
+
+.chapters-section {
+  margin-top: 24px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.section-header h4 {
+  margin: 0;
+}
+
+.toggle-edit {
+  font-size: 13px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chapter-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+
+.chapter-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chapter-title-input {
+  background: #11141a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+}
+
+.chapter-content-input {
+  background: #11141a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.chapter-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.chapter-preview .chapter-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.chapter-preview .chapter-num {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.chapter-preview .chapter-title {
+  font-weight: 600;
+}
+
+.chapter-preview .chapter-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.chapter-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
