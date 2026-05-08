@@ -9,6 +9,7 @@ import {
   HomeOutlined,
 } from "@ant-design/icons";
 
+import Home from "./pages/Home";
 import NovelList from "./pages/NovelList";
 import NovelDetail from "./pages/NovelDetail";
 import NovelImport from "./pages/NovelImport";
@@ -27,7 +28,7 @@ const menuItems = [
   {
     key: "/novels",
     icon: <BookOutlined />,
-    label: <Link to="/">小说管理</Link>,
+    label: <Link to="/novels">小说管理</Link>,
   },
   {
     key: "/import",
@@ -37,7 +38,7 @@ const menuItems = [
   {
     key: "/extraction",
     icon: <FileSearchOutlined />,
-    label: <Link to="/extraction">萃取</Link>,
+    label: <Link to="/extraction">信息萃取</Link>,
   },
   {
     key: "/ip-generation",
@@ -51,7 +52,7 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Header style={{ display: "flex", alignItems: "center", background: "#001529" }}>
+      <Header style={{ display: "flex", alignItems: "center", background: "#1a1d23" }}>
         <Title level={4} style={{ color: "white", margin: 0, marginRight: 48 }}>
           StoryForge
         </Title>
@@ -71,15 +72,15 @@ export default function App() {
         <Layout style={{ padding: "24px" }}>
           <Content
             style={{
-              background: "#fff",
-              padding: 24,
+              background: "#f0f2f5",
+              padding: 0,
               margin: 0,
               minHeight: 280,
-              borderRadius: 8,
             }}
           >
             <Routes>
-              <Route path="/" element={<NovelList />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/novels" element={<NovelList />} />
               <Route path="/novels/:novelId" element={<NovelDetail />} />
               <Route path="/import" element={<NovelImport />} />
               <Route path="/extraction" element={<Extraction />} />
