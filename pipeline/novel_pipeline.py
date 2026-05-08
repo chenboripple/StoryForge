@@ -4,10 +4,14 @@ StoryForge - Pipeline
 """
 
 from langgraph.graph import StateGraph, END
-from typing import Dict, Callable, Any, Optional
+from typing import Dict, Callable, Any, Optional, List
+from dataclasses import dataclass, field
 import json
 import os
 from collections import Counter
+
+# 引入旧状态的所有字段用于兼容
+from core.state import NovelState, PipelineStage
 
 from core.models import (
     NovelMeta, PipelineStage, Chapter, ChapterStatus,
@@ -30,15 +34,76 @@ from stages.outline.outline_generator import OutlineGenerator
 
 @dataclass
 class PipelineState:
-    """Pipeline 轻量运行时状态 - 不持久化，只用于节点间传递控制信息"""
+    """Pipeline 运行时状态 - 兼容旧 NovelState 所有字段，用于 Agent 代码正常工作"""
+    # 元数据
     novel_id: str = ""
+    novel_title: str = ""
+    genre: str = ""
+    target_word_count: int = 3000
+    current_stage: PipelineStage = PipelineStage.CREATION
+
+    # 创作层
+    concept: str = ""
+    outline: str = ""
+    volume_outline: Dict[int, str] = field(default_factory=dict)
+    characters: List[Any] = field(default_factory=list)
+
+    # 章节与审稿
+    chapters: Dict[int, Any] = field(default_factory=dict)
+    chapter_status: Dict[int, Any] = field(default_factory=dict)
     current_chapter: int = 1
     review_round: int = 0
     max_review_rounds: int = 3
+    reviews: Dict[int, List[Any]] = field(default_factory=dict)
+    structured_reviews: Dict[int, List[Any]] = field(default_factory=dict)
+    proofread_results: Dict[int, List[Any]] = field(default_factory=dict)
+    proofread_records: Dict[int, List[Any]] = field(default_factory=dict)
+
+    # 校对范围控制
+    proofread_scope: str = "chapter"
+    proofread_context: Dict[str, Any] = field(default_factory=dict)
+
+    # 萃取层
+    knowledge_base: Dict[str, Any] = field(default_factory=dict)
+    chapter_analyses: Dict[int, Any] = field(default_factory=dict)
+
+    # IP 生成层
+    character_ips: Dict[str, Dict] = field(default_factory=dict)
+    visual_assets: Dict[str, List[Dict]] = field(default_factory=dict)
+    story_bible: Optional[Any] = None
+
+    # 兼容容器
+    creation: Dict[str, Any] = field(default_factory=dict)
+
+    # Agent 间消息与路由
+    agent_messages: List[Dict] = field(default_factory=list)
+    routing_suggestions: List[Dict] = field(default_factory=list)
+
+    # 控制字段
     error_message: str = ""
     human_feedback: Optional[str] = None
     should_pause: bool = False
     last_node: str = ""
+
+    def __post_init__(self):
+        # 兼容旧数据：确保 creation 中有 chapters 引用
+        if isinstance(self.creation, dict):
+            self.creation.setdefault("chapters", self.chapters)
+            self.creation.setdefault("chapter_outlines", {})
+            self.creation.setdefault("chapter_summaries", {})
+            self.creation.setdefault("extraction_notes", {})
+        else:
+            self.creation = {"chapters": self.chapters}
+
+    def get_current_chapter_status(self):
+        """兼容 NovelState 方法"""
+        from core.models.chapter import ChapterStatus
+        return self.chapter_status.get(self.current_chapter, ChapterStatus.PENDING)
+
+    def copy(self):
+        """兼容 NovelState 方法，深拷贝"""
+        import copy
+        return copy.deepcopy(self)
 
 
 class NovelPipeline:
@@ -508,7 +573,16 @@ class NovelPipeline:
                     world_setting=None
                 )
 
-        result = self.workflow.invoke(initial_state)
+        result_data = self.workflow.invoke(initial_state)
+
+        # 将 LangGraph 返回的 dict 转换回 PipelineState 对象
+        if isinstance(result_data, dict):
+            # 从字典安全构造，自动过滤不在 dataclass 中的字段
+            valid_fields = {f.name for f in PipelineState.__dataclass_fields__.values()}
+            filtered = {k: v for k, v in result_data.items() if k in valid_fields}
+            result = PipelineState(**filtered)
+        else:
+            result = result_data
 
         self._save_checkpoint(result, "completed")
 
