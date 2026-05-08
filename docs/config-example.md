@@ -14,14 +14,12 @@ mkdir -p ~/.storyforge
 
 `deploy.sh` 首次运行时若发现 `~/.storyforge/storyforge.yaml` 不存在，会自动从本文档复制一份。
 
-## 加载优先级
+## 加载位置
 
-配置文件查找顺序（找到即停）：
+配置文件固定位置：
 
-1. `$STORYFORGE_CONFIG` 环境变量指定的路径
-2. `~/.storyforge/storyforge.yaml`  ← **推荐位置**
-3. `<项目根目录>/.storyforge/storyforge.yaml`
-4. 内置默认值
+1. `~/.storyforge/storyforge.yaml`
+2. 若文件不存在，则使用内置默认值
 
 ## 完整示例
 
@@ -70,6 +68,7 @@ server:
   host: 0.0.0.0
   port: 5089
   cors_origins: "*"
+  debug: false
 
 # ==================== Pipeline 配置 ====================
 pipeline:
@@ -124,5 +123,4 @@ llm:
 ## 安全提示
 
 - `~/.storyforge/storyforge.yaml` **不应**被任何 Git 仓库追踪，可放心填写真实 API Key
-- 项目根目录下的 `.storyforge/storyforge.yaml` 已被 `.gitignore` 排除
-- 如需在 CI / 共享环境覆盖配置，使用 `STORYFORGE_CONFIG` 环境变量指向独立配置文件
+- 配置统一放在用户主目录，避免把密钥写进仓库

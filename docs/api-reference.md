@@ -459,35 +459,33 @@ def get_config(reload: bool = False) -> StoryForgeConfig
 def reset_config() -> None
 ```
 
-### `core/settings.py` (JSON 配置 - web_console 用)
+### `core/config.py`（统一 YAML 配置）
+
+配置文件固定位置：`~/.storyforge/storyforge.yaml`
 
 ```python
-@dataclass(frozen=True)
-class ConsoleSettings:
-    max_running_tasks: int
-    default_command: str
-    template_file: Path
+@dataclass
+class ConsoleConfig:
+    max_running_tasks: int = 3
+    default_command: str = "python examples/demo_pipeline.py"
+    template_file: str = "~/.storyforge/templates.json"
 
-@dataclass(frozen=True)
-class DebugSettings:
-    output_dir: Path
+@dataclass
+class DebugConfig:
+    output_dir: str = "debug_output"
 
-@dataclass(frozen=True)
-class PipelineSettings:
-    default_target_word_count: int
+@dataclass
+class StoryForgeConfig:
+    llm: LLMConfig
+    storage: StorageConfig
+    server: ServerConfig
+    pipeline: PipelineConfig
+    console: ConsoleConfig
+    debug: DebugConfig
 
-@dataclass(frozen=True)
-class StoryForgeSettings:
-    project_root: Path
-    config_file: Path
-    console: ConsoleSettings
-    debug: DebugSettings
-    pipeline: PipelineSettings
-
-# 加载函数
-@lru_cache(maxsize=1)
-def get_settings() -> StoryForgeSettings
-def get_settings_with_sources() -> Tuple[StoryForgeSettings, Dict[str, str]]
+def load_config(path: Optional[str] = None) -> StoryForgeConfig
+def get_config(reload: bool = False) -> StoryForgeConfig
+def reset_config() -> None
 ```
 
 ## Agents (agents/)
@@ -626,42 +624,38 @@ class IPGenerator:
     ) -> StoryBible
 ```
 
-## Storage (backend/)
+## Storage (core/storage/)
 
-### `backend/storage.py`
+### `core/storage/manager.py`
 
-JSON 文件存储层，存储位置由 `config.storage.data_dir` 决定。
+统一存储管理器，存储位置由 `config.storage.data_dir` 决定。
 
 **目录结构**：
 ```
 {data_dir}/
-├── index.json         # 小说清单索引
+├── index.json            # 小说清单索引
 └── novels/
-    └── {novel_id}.json  # 单个小说完整状态
+    └── {novel_id}/       # 单本小说目录
+        ├── novel_meta.json
+        ├── chapters.json
+        ├── reviews.json
+        └── ...
 ```
 
 **函数**：
 
 ```python
-from backend import storage
+from core.storage import get_storage_manager
 
-# 保存小说（同时更新索引）
-storage.save_novel(state: NovelState) -> None
+sm = get_storage_manager()
 
-# 加载单个小说
-storage.load_novel(novel_id: str) -> Optional[NovelState]
-
-# 列出所有小说（从 index.json）
-storage.list_novels() -> List[dict]
-
-# 仅更新索引（不保存小说）
-storage.update_novel_index(state: NovelState) -> None
-
-# 删除小说（同时更新索引）
-storage.delete_novel(novel_id: str) -> bool
-
-# 重建索引（扫描 novels/ 目录）
-storage.rebuild_index() -> int
+sm.create_novel(novel_id: str, title: str = "", genre: str = "", concept: str = "", target_word_count: int = 3000)
+sm.load_novel_meta(novel_id: str)
+sm.save_chapters(novel_id: str, chapters: Dict[int, Chapter])
+sm.load_chapters(novel_id: str)
+sm.list_novels() -> List[dict]
+sm.delete_novel(novel_id: str) -> bool
+sm.rebuild_index() -> int
 ```
 
 ### `backend/app.py` (Flask API)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -21,8 +22,10 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from core.config import get_config
+from core.storage import get_storage_manager
 
 _cfg = get_config()
+_sm = get_storage_manager()
 
 
 @dataclass
@@ -31,7 +34,7 @@ class TaskRuntime:
     project_dir: str
     command: str
     created_at: str
-    status: str = "running"
+    status: str = "queued"
     pid: Optional[int] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
@@ -49,7 +52,7 @@ class IpTaskRuntime:
     character_ids: List[str]
     force_regenerate: bool
     created_at: str
-    status: str = "running"
+    status: str = "queued"
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     return_code: Optional[int] = None
@@ -75,13 +78,25 @@ class GenerateIpRequest(BaseModel):
     force_regenerate: bool = False
 
 
+@dataclass
+class QueueTask:
+    task_id: str
+    task_type: str  # "pipeline" | "ip"
+
+
 app = FastAPI(title="StoryForge Console", version="0.2.0")
 TASKS: Dict[str, TaskRuntime] = {}
 IP_TASKS: Dict[str, IpTaskRuntime] = {}
 TASK_LOCK = threading.Lock()
-MAX_RUNNING_TASKS = _cfg.console.max_running_tasks
+TASK_COND = threading.Condition(TASK_LOCK)
+TASK_QUEUE: Deque[QueueTask] = deque()
+RUNNING_TASK_IDS: set[str] = set()
+CANCELLED_TASK_IDS: set[str] = set()
+DISPATCHER_STARTED = False
+MAX_RUNNING_TASKS = max(1, int(_cfg.console.max_running_tasks))
 DEFAULT_COMMAND = _cfg.console.default_command
 TEMPLATE_FILE = Path(_cfg.console.template_file_abs)
+RUNTIME_STATE_FILE = Path(_cfg.data_dir_abs) / "console" / "runtime_state.json"
 
 
 def _now() -> str:
@@ -134,9 +149,215 @@ def _tail_logs(logs: Deque[str], offset: int) -> List[str]:
 
 def _running_tasks_count() -> int:
     with TASK_LOCK:
-        run_count = sum(1 for t in TASKS.values() if t.status == "running")
-        ip_count = sum(1 for t in IP_TASKS.values() if t.status == "running")
-        return run_count + ip_count
+        return len(RUNNING_TASK_IDS)
+
+
+def _queue_size() -> int:
+    with TASK_LOCK:
+        return len(TASK_QUEUE)
+
+
+def _remove_queued_task_unlocked(task_id: str) -> bool:
+    """在持有 TASK_LOCK 时，从队列移除某任务。"""
+    for queued in list(TASK_QUEUE):
+        if queued.task_id == task_id:
+            TASK_QUEUE.remove(queued)
+            return True
+    return False
+
+
+def _resolve_debug_output_dir() -> Path:
+    debug_dir = Path(_cfg.debug.output_dir).expanduser()
+    if debug_dir.is_absolute():
+        return debug_dir
+    if _cfg.config_path:
+        return (Path(_cfg.config_path).parent / debug_dir).resolve()
+    return (Path.cwd() / debug_dir).resolve()
+
+
+def _resolve_project_dir(project_dir: str) -> str:
+    return os.path.abspath(project_dir.strip())
+
+
+def _save_runtime_state_unlocked() -> None:
+    """持久化任务与队列状态。调用方必须持有 TASK_LOCK。"""
+    payload = {
+        "version": 1,
+        "updated_at": _now(),
+        "tasks": [_task_to_dict(task) for task in TASKS.values()],
+        "ip_tasks": [_ip_task_to_dict(task) for task in IP_TASKS.values()],
+        "queue": [{"task_id": item.task_id, "task_type": item.task_type} for item in TASK_QUEUE],
+    }
+    RUNTIME_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RUNTIME_STATE_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_runtime_state() -> None:
+    """从磁盘恢复任务和队列状态。"""
+    if not RUNTIME_STATE_FILE.exists():
+        return
+
+    try:
+        payload = json.loads(RUNTIME_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    if not isinstance(payload, dict):
+        return
+
+    restored_tasks: Dict[str, TaskRuntime] = {}
+    for raw in payload.get("tasks", []):
+        if not isinstance(raw, dict):
+            continue
+        task_id = str(raw.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        status = str(raw.get("status") or "queued")
+        # 进程重启后 running 无法恢复，标记为 failed。
+        if status == "running":
+            status = "failed"
+        restored_tasks[task_id] = TaskRuntime(
+            task_id=task_id,
+            project_dir=str(raw.get("project_dir") or ""),
+            command=str(raw.get("command") or ""),
+            created_at=str(raw.get("created_at") or _now()),
+            status=status,
+            pid=raw.get("pid"),
+            started_at=raw.get("started_at"),
+            finished_at=raw.get("finished_at") or (_now() if status == "failed" else None),
+            return_code=raw.get("return_code") if status != "failed" else (raw.get("return_code") or -1),
+            log_file=raw.get("log_file"),
+        )
+
+    restored_ip_tasks: Dict[str, IpTaskRuntime] = {}
+    for raw in payload.get("ip_tasks", []):
+        if not isinstance(raw, dict):
+            continue
+        task_id = str(raw.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        status = str(raw.get("status") or "queued")
+        error = raw.get("error")
+        if status == "running":
+            status = "failed"
+            error = error or "任务在服务重启时中断"
+        restored_ip_tasks[task_id] = IpTaskRuntime(
+            task_id=task_id,
+            project_dir=str(raw.get("project_dir") or ""),
+            novel_id=str(raw.get("novel_id") or ""),
+            character_ids=[str(x) for x in raw.get("character_ids", []) if str(x).strip()],
+            force_regenerate=bool(raw.get("force_regenerate", False)),
+            created_at=str(raw.get("created_at") or _now()),
+            status=status,
+            started_at=raw.get("started_at"),
+            finished_at=raw.get("finished_at") or (_now() if status == "failed" else None),
+            return_code=raw.get("return_code") if status != "failed" else (raw.get("return_code") or -1),
+            error=error,
+            result=raw.get("result") if isinstance(raw.get("result"), dict) else {},
+        )
+
+    restored_queue: Deque[QueueTask] = deque()
+    for item in payload.get("queue", []):
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("task_id") or "").strip()
+        task_type = str(item.get("task_type") or "").strip()
+        if not task_id or task_type not in {"pipeline", "ip"}:
+            continue
+        if task_type == "pipeline" and task_id not in restored_tasks:
+            continue
+        if task_type == "ip" and task_id not in restored_ip_tasks:
+            continue
+        restored_queue.append(QueueTask(task_id=task_id, task_type=task_type))
+
+    with TASK_LOCK:
+        TASKS.clear()
+        TASKS.update(restored_tasks)
+        IP_TASKS.clear()
+        IP_TASKS.update(restored_ip_tasks)
+        TASK_QUEUE.clear()
+        TASK_QUEUE.extend(restored_queue)
+        RUNNING_TASK_IDS.clear()
+        CANCELLED_TASK_IDS.clear()
+
+
+def _enqueue_task(task: QueueTask) -> int:
+    with TASK_COND:
+        TASK_QUEUE.append(task)
+        queue_position = len(TASK_QUEUE)
+        _save_runtime_state_unlocked()
+        TASK_COND.notify_all()
+        return queue_position
+
+
+def _mark_task_running(task: QueueTask) -> None:
+    if task.task_type == "pipeline":
+        runtime = TASKS.get(task.task_id)
+    else:
+        runtime = IP_TASKS.get(task.task_id)
+    if runtime:
+        runtime.status = "running"
+        if runtime.started_at is None:
+            runtime.started_at = _now()
+
+
+def _finalize_task(task_id: str) -> None:
+    with TASK_COND:
+        RUNNING_TASK_IDS.discard(task_id)
+        _save_runtime_state_unlocked()
+        TASK_COND.notify_all()
+
+
+def _execute_queue_task(task: QueueTask) -> None:
+    try:
+        if task.task_type == "pipeline":
+            _run_task(task.task_id)
+        else:
+            _run_ip_task(task.task_id)
+    finally:
+        _finalize_task(task.task_id)
+
+
+def _dispatcher_loop() -> None:
+    while True:
+        task_to_run: Optional[QueueTask] = None
+        with TASK_COND:
+            while not TASK_QUEUE or len(RUNNING_TASK_IDS) >= MAX_RUNNING_TASKS:
+                TASK_COND.wait()
+
+            while TASK_QUEUE and task_to_run is None:
+                task = TASK_QUEUE.popleft()
+
+                # 被取消的任务不再调度，直接丢弃并清理标记。
+                if task.task_id in CANCELLED_TASK_IDS:
+                    CANCELLED_TASK_IDS.discard(task.task_id)
+                    _save_runtime_state_unlocked()
+                    continue
+
+                # 任务对象可能已经被删除，跳过无效任务。
+                runtime_exists = task.task_id in TASKS if task.task_type == "pipeline" else task.task_id in IP_TASKS
+                if not runtime_exists:
+                    continue
+
+                task_to_run = task
+
+            if task_to_run is None:
+                continue
+
+            RUNNING_TASK_IDS.add(task_to_run.task_id)
+            _mark_task_running(task_to_run)
+            _save_runtime_state_unlocked()
+
+        threading.Thread(target=_execute_queue_task, args=(task_to_run,), daemon=True).start()
+
+
+def _start_dispatcher() -> None:
+    global DISPATCHER_STARTED
+    with TASK_LOCK:
+        if DISPATCHER_STARTED:
+            return
+        DISPATCHER_STARTED = True
+    threading.Thread(target=_dispatcher_loop, daemon=True).start()
 
 
 def _load_templates() -> List[dict]:
@@ -158,6 +379,36 @@ def _save_templates(templates: List[dict]) -> None:
     )
 
 
+def _allowed_commands_for_project(project_dir: str) -> set[str]:
+    """返回指定项目目录允许执行的命令集合。"""
+    allowed: set[str] = {DEFAULT_COMMAND.strip()}
+    normalized_project = os.path.abspath(project_dir)
+
+    for template in _load_templates():
+        t_project = os.path.abspath(str(template.get("project_dir") or "").strip())
+        t_command = str(template.get("command") or "").strip()
+        if t_project == normalized_project and t_command:
+            allowed.add(t_command)
+
+    return allowed
+
+
+def _assert_command_allowed(project_dir: str, command: str) -> None:
+    """校验命令是否在白名单中。"""
+    normalized_command = command.strip()
+    allowed = _allowed_commands_for_project(project_dir)
+
+    if normalized_command in allowed:
+        return
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "命令不在白名单中。请使用默认命令，或先在“模板”中保存该命令后再启动。"
+        ),
+    )
+
+
 def _extract_chapter_text(chapter_obj: object) -> str:
     if isinstance(chapter_obj, str):
         return chapter_obj
@@ -169,6 +420,9 @@ def _extract_chapter_text(chapter_obj: object) -> str:
     text_attr = getattr(chapter_obj, "text", None)
     if isinstance(text_attr, str):
         return text_attr
+    content_attr = getattr(chapter_obj, "content", None)
+    if isinstance(content_attr, str):
+        return content_attr
     return str(chapter_obj)
 
 
@@ -178,54 +432,43 @@ def _split_sentences(text: str) -> List[str]:
 
 
 def _discover_novels(project_dir: str) -> List[dict]:
-    debug_dir = Path(project_dir) / "debug_output"
-    if not debug_dir.exists():
-        return []
+    # project_dir 保留用于接口兼容，小说数据统一从 StorageManager 读取。
+    _ = project_dir
 
-    snapshots = sorted(
-        debug_dir.glob("state_final_*.json"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-
-    novels: Dict[str, dict] = {}
-    for snap in snapshots:
-        try:
-            data = json.loads(snap.read_text(encoding="utf-8"))
-        except Exception:
+    novels: List[dict] = []
+    for entry in _sm.list_novels():
+        novel_id = str(entry.get("novel_id") or "").strip()
+        if not novel_id:
             continue
 
-        novel_id = str(data.get("novel_id") or snap.stem)
-        if novel_id in novels:
-            continue
+        title = str(entry.get("novel_title") or novel_id)
+        chapters = _sm.load_chapters(novel_id)
 
-        title = str(data.get("novel_title") or novel_id)
-        chapters = data.get("chapters") if isinstance(data.get("chapters"), dict) else {}
+        character_names: List[str] = []
+        char_graph = _sm.load_characters(novel_id)
+        if char_graph and getattr(char_graph, "characters", None):
+            character_names = [
+                c.name.strip() for c in char_graph.characters
+                if getattr(c, "name", "") and c.name.strip()
+            ]
 
-        characters: List[str] = []
-        if isinstance(data.get("characters"), list):
-            for c in data["characters"]:
-                if isinstance(c, dict) and c.get("name"):
-                    characters.append(str(c["name"]))
-                elif isinstance(c, str):
-                    characters.append(c)
-        if not characters and isinstance(data.get("character_ips"), dict):
-            characters = [str(k) for k in data["character_ips"].keys()]
+        novels.append(
+            {
+                "novel_id": novel_id,
+                "novel_title": title,
+                "chapter_count": len(chapters),
+                "characters": sorted(list(set(character_names))),
+                "updated_at": str(entry.get("updated_at") or ""),
+            }
+        )
 
-        novels[novel_id] = {
-            "novel_id": novel_id,
-            "novel_title": title,
-            "snapshot_file": str(snap),
-            "chapter_count": len(chapters),
-            "characters": sorted(list({name.strip() for name in characters if name and name.strip()})),
-            "updated_at": datetime.fromtimestamp(snap.stat().st_mtime).isoformat(timespec="seconds"),
-        }
-
-    return list(novels.values())
+    novels.sort(key=lambda n: n.get("updated_at") or "", reverse=True)
+    return novels
 
 
 def _local_store_dir(project_dir: str) -> Path:
-    return Path(project_dir) / "local_store"
+    _ = project_dir
+    return Path(_cfg.data_dir_abs) / "local_store"
 
 
 def _ip_asset_dir(project_dir: str, novel_id: str) -> Path:
@@ -243,7 +486,8 @@ def _hash_vector(text: str, dim: int = 64) -> List[float]:
 
     vec = [0.0] * dim
     for tok in tokens:
-        idx = hash(tok) % dim
+        digest = hashlib.sha256(tok.encode("utf-8")).digest()
+        idx = int.from_bytes(digest[:8], "big") % dim
         vec[idx] += 1.0
 
     norm = sum(v * v for v in vec) ** 0.5
@@ -286,11 +530,22 @@ def _upsert_vector_docs(project_dir: str, docs: List[dict]) -> int:
 
 
 def _load_snapshot(project_dir: str, novel_id: str) -> dict:
-    for item in _discover_novels(project_dir):
-        if item["novel_id"] == novel_id:
-            snap_file = Path(item["snapshot_file"])
-            return json.loads(snap_file.read_text(encoding="utf-8"))
-    raise RuntimeError(f"未找到小说快照: {novel_id}（请先跑一次生成流程）")
+    _ = project_dir
+    meta = _sm.load_novel_meta(novel_id)
+    if not meta:
+        raise RuntimeError(f"未找到小说: {novel_id}")
+
+    chapters = _sm.load_chapters(novel_id)
+    chapter_payload = {
+        str(ch_num): chapter.content
+        for ch_num, chapter in chapters.items()
+    }
+
+    return {
+        "novel_id": novel_id,
+        "novel_title": meta.novel_title or novel_id,
+        "chapters": chapter_payload,
+    }
 
 
 def _generate_character_ip(snapshot: dict, novel_id: str, novel_title: str, character_name: str) -> dict:
@@ -332,8 +587,8 @@ def _generate_character_ip(snapshot: dict, novel_id: str, novel_title: str, char
 def _run_ip_task(task_id: str) -> None:
     with TASK_LOCK:
         task = IP_TASKS[task_id]
-
-    task.started_at = _now()
+        if task.started_at is None:
+            task.started_at = _now()
 
     try:
         snapshot = _load_snapshot(task.project_dir, task.novel_id)
@@ -392,33 +647,41 @@ def _run_ip_task(task_id: str) -> None:
 
         upserted = _upsert_vector_docs(task.project_dir, vector_docs) if vector_docs else 0
 
-        task.result = {
-            "novel_id": task.novel_id,
-            "character_count": len(task.character_ids),
-            "generated_files": generated_files,
-            "vector_docs_upserted": upserted,
-            "vector_store": str(_vector_store_file(task.project_dir)),
-        }
-        task.return_code = 0
-        task.status = "success"
+        with TASK_LOCK:
+            task.result = {
+                "novel_id": task.novel_id,
+                "character_count": len(task.character_ids),
+                "generated_files": generated_files,
+                "vector_docs_upserted": upserted,
+                "vector_store": str(_vector_store_file(task.project_dir)),
+            }
+            task.return_code = 0
+            task.status = "success"
+            _save_runtime_state_unlocked()
     except Exception as exc:
-        task.error = str(exc)
-        task.return_code = 1
-        task.status = "failed"
+        with TASK_LOCK:
+            task.error = str(exc)
+            task.return_code = 1
+            task.status = "failed"
+            _save_runtime_state_unlocked()
     finally:
-        task.finished_at = _now()
+        with TASK_LOCK:
+            task.finished_at = _now()
+            _save_runtime_state_unlocked()
 
 
 def _run_task(task_id: str) -> None:
     with TASK_LOCK:
         task = TASKS[task_id]
+        if task.started_at is None:
+            task.started_at = _now()
 
-    log_dir = Path(task.project_dir) / "debug_output" / "console_runs"
+    log_dir = _resolve_debug_output_dir() / "console_runs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{task.task_id}.log"
 
-    task.started_at = _now()
-    task.log_file = str(log_file)
+    with TASK_LOCK:
+        task.log_file = str(log_file)
 
     process = subprocess.Popen(
         shlex.split(task.command),
@@ -428,21 +691,30 @@ def _run_task(task_id: str) -> None:
         text=True,
         bufsize=1,
     )
-    task.process = process
-    task.pid = process.pid
+    with TASK_LOCK:
+        task.process = process
+        task.pid = process.pid
+        _save_runtime_state_unlocked()
 
     with open(log_file, "w", encoding="utf-8") as fout:
         if process.stdout:
             for line in process.stdout:
-                task.logs.append(line)
+                with TASK_LOCK:
+                    task.logs.append(line)
                 fout.write(line)
                 fout.flush()
 
     rc = process.wait()
-    task.return_code = rc
-    task.finished_at = _now()
-    if task.status != "stopped":
-        task.status = "success" if rc == 0 else "failed"
+    with TASK_LOCK:
+        task.return_code = rc
+        task.finished_at = _now()
+        if task.status != "stopped":
+            task.status = "success" if rc == 0 else "failed"
+        _save_runtime_state_unlocked()
+
+
+_load_runtime_state()
+_start_dispatcher()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -750,7 +1022,12 @@ loadIpTasks();
 
 @app.get("/api/config")
 async def get_config() -> dict:
-    return {"max_running_tasks": MAX_RUNNING_TASKS}
+    return {
+        "max_running_tasks": MAX_RUNNING_TASKS,
+        "configured_max_running_tasks": _cfg.console.max_running_tasks,
+        "running_tasks": _running_tasks_count(),
+        "queued_tasks": _queue_size(),
+    }
 
 
 @app.get("/api/templates")
@@ -784,7 +1061,7 @@ async def save_template(req: SaveTemplateRequest) -> dict:
 
 @app.get("/api/novels")
 async def list_novels(project_dir: str = Query(..., description="项目目录")) -> dict:
-    project_dir = os.path.abspath(project_dir)
+    project_dir = _resolve_project_dir(project_dir)
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
     return {"novels": _discover_novels(project_dir)}
@@ -795,7 +1072,7 @@ async def list_novel_characters(
     novel_id: str,
     project_dir: str = Query(..., description="项目目录"),
 ) -> dict:
-    project_dir = os.path.abspath(project_dir)
+    project_dir = _resolve_project_dir(project_dir)
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
 
@@ -808,19 +1085,13 @@ async def list_novel_characters(
 
 @app.post("/api/ip/generate")
 async def generate_ip(req: GenerateIpRequest) -> dict:
-    project_dir = os.path.abspath(req.project_dir)
+    project_dir = _resolve_project_dir(req.project_dir)
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
 
     character_ids = [c.strip() for c in req.character_ids if c and c.strip()]
     if not character_ids:
         raise HTTPException(status_code=400, detail="character_ids 不能为空")
-
-    if _running_tasks_count() >= MAX_RUNNING_TASKS:
-        raise HTTPException(
-            status_code=429,
-            detail=f"运行中任务已达上限（{MAX_RUNNING_TASKS}），请先停止或等待已有任务结束",
-        )
 
     task_id = uuid.uuid4().hex[:12]
     task = IpTaskRuntime(
@@ -834,9 +1105,10 @@ async def generate_ip(req: GenerateIpRequest) -> dict:
 
     with TASK_LOCK:
         IP_TASKS[task_id] = task
+        _save_runtime_state_unlocked()
+    queue_position = _enqueue_task(QueueTask(task_id=task_id, task_type="ip"))
 
-    threading.Thread(target=_run_ip_task, args=(task_id,), daemon=True).start()
-    return {"ok": True, "task": _ip_task_to_dict(task)}
+    return {"ok": True, "task": _ip_task_to_dict(task), "queue_position": queue_position}
 
 
 @app.get("/api/ip/tasks")
@@ -848,25 +1120,22 @@ async def list_ip_tasks() -> dict:
 
 @app.get("/api/ip/tasks/{task_id}")
 async def get_ip_task(task_id: str) -> dict:
-    task = IP_TASKS.get(task_id)
-    if not task:
+    with TASK_LOCK:
+        task = IP_TASKS.get(task_id)
+        task_payload = _ip_task_to_dict(task) if task else None
+    if not task_payload:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return {"task": _ip_task_to_dict(task)}
+    return {"task": task_payload}
 
 
 @app.post("/api/tasks/start")
 async def start_task(req: StartTaskRequest) -> dict:
-    project_dir = os.path.abspath(req.project_dir)
+    project_dir = _resolve_project_dir(req.project_dir)
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
 
-    command = req.command or DEFAULT_COMMAND
-
-    if _running_tasks_count() >= MAX_RUNNING_TASKS:
-        raise HTTPException(
-            status_code=429,
-            detail=f"运行中任务已达上限（{MAX_RUNNING_TASKS}），请先停止或等待已有任务结束",
-        )
+    command = (req.command or DEFAULT_COMMAND).strip()
+    _assert_command_allowed(project_dir, command)
 
     task_id = uuid.uuid4().hex[:12]
     task = TaskRuntime(
@@ -878,9 +1147,10 @@ async def start_task(req: StartTaskRequest) -> dict:
 
     with TASK_LOCK:
         TASKS[task_id] = task
+        _save_runtime_state_unlocked()
+    queue_position = _enqueue_task(QueueTask(task_id=task_id, task_type="pipeline"))
 
-    threading.Thread(target=_run_task, args=(task_id,), daemon=True).start()
-    return {"ok": True, "task": _task_to_dict(task)}
+    return {"ok": True, "task": _task_to_dict(task), "queue_position": queue_position}
 
 
 @app.get("/api/tasks")
@@ -892,11 +1162,11 @@ async def list_tasks() -> dict:
 
 @app.get("/api/tasks/{task_id}/logs")
 async def get_logs(task_id: str, offset: int = 0) -> dict:
-    task = TASKS.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-
-    lines = _tail_logs(task.logs, offset)
+    with TASK_LOCK:
+        task = TASKS.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        lines = _tail_logs(task.logs, offset)
     return {
         "task_id": task_id,
         "offset": offset,
@@ -907,31 +1177,65 @@ async def get_logs(task_id: str, offset: int = 0) -> dict:
 
 @app.get("/api/tasks/{task_id}/log-file")
 async def get_log_file(task_id: str):
-    task = TASKS.get(task_id)
+    with TASK_LOCK:
+        task = TASKS.get(task_id)
+        log_file = task.log_file if task else None
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if not task.log_file or not os.path.exists(task.log_file):
+    if not log_file or not os.path.exists(log_file):
         raise HTTPException(status_code=404, detail="日志文件不存在")
-    return FileResponse(task.log_file, filename=f"{task_id}.log", media_type="text/plain")
+    return FileResponse(log_file, filename=f"{task_id}.log", media_type="text/plain")
 
 
 @app.post("/api/tasks/{task_id}/stop")
 async def stop_task(task_id: str) -> dict:
-    task = TASKS.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+    with TASK_LOCK:
+        task = TASKS.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在")
 
-    proc = task.process
+        removed = _remove_queued_task_unlocked(task_id)
+        if removed:
+            CANCELLED_TASK_IDS.add(task_id)
+            task.status = "stopped"
+            task.finished_at = _now()
+            _save_runtime_state_unlocked()
+            TASK_COND.notify_all()
+            return {"ok": True, "task": _task_to_dict(task)}
+
+        if task.status == "queued":
+            # queued 但不在队列中（可能已被调度线程取走），仍视为停止。
+            CANCELLED_TASK_IDS.add(task_id)
+            task.status = "stopped"
+            task.finished_at = _now()
+            _save_runtime_state_unlocked()
+            TASK_COND.notify_all()
+            return {"ok": True, "task": _task_to_dict(task)}
+
+        proc = task.process
+
     if proc and proc.poll() is None:
         proc.terminate()
         await asyncio.sleep(0.2)
         if proc.poll() is None:
             proc.kill()
-        task.status = "stopped"
-        task.finished_at = _now()
-    return {"ok": True, "task": _task_to_dict(task)}
+        with TASK_LOCK:
+            task.status = "stopped"
+            task.finished_at = _now()
+            _save_runtime_state_unlocked()
+
+    with TASK_LOCK:
+        payload = _task_to_dict(task)
+    return {"ok": True, "task": payload}
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "tasks": len(TASKS), "ip_tasks": len(IP_TASKS)}
+    with TASK_LOCK:
+        return {
+            "ok": True,
+            "tasks": len(TASKS),
+            "ip_tasks": len(IP_TASKS),
+            "running_tasks": len(RUNNING_TASK_IDS),
+            "queued_tasks": len(TASK_QUEUE),
+        }

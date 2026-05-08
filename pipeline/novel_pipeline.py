@@ -5,13 +5,12 @@ StoryForge - Pipeline
 
 from langgraph.graph import StateGraph, END
 from typing import Dict, Callable, Any, Optional, List
-from dataclasses import dataclass, field
 import json
 import os
 from collections import Counter
 
 # 引入旧状态的所有字段用于兼容
-from core.state import NovelState, PipelineStage
+from core.state import NovelState
 
 from core.models import (
     NovelMeta, PipelineStage, Chapter, ChapterStatus,
@@ -31,79 +30,8 @@ from stages.extraction.knowledge_extractor import KnowledgeExtractor
 from stages.ip_generation.ip_generator import IPGenerator
 from stages.outline.outline_generator import OutlineGenerator
 
-
-@dataclass
-class PipelineState:
-    """Pipeline 运行时状态 - 兼容旧 NovelState 所有字段，用于 Agent 代码正常工作"""
-    # 元数据
-    novel_id: str = ""
-    novel_title: str = ""
-    genre: str = ""
-    target_word_count: int = 3000
-    current_stage: PipelineStage = PipelineStage.CREATION
-
-    # 创作层
-    concept: str = ""
-    outline: str = ""
-    volume_outline: Dict[int, str] = field(default_factory=dict)
-    characters: List[Any] = field(default_factory=list)
-
-    # 章节与审稿
-    chapters: Dict[int, Any] = field(default_factory=dict)
-    chapter_status: Dict[int, Any] = field(default_factory=dict)
-    current_chapter: int = 1
-    review_round: int = 0
-    max_review_rounds: int = 3
-    reviews: Dict[int, List[Any]] = field(default_factory=dict)
-    structured_reviews: Dict[int, List[Any]] = field(default_factory=dict)
-    proofread_results: Dict[int, List[Any]] = field(default_factory=dict)
-    proofread_records: Dict[int, List[Any]] = field(default_factory=dict)
-
-    # 校对范围控制
-    proofread_scope: str = "chapter"
-    proofread_context: Dict[str, Any] = field(default_factory=dict)
-
-    # 萃取层
-    knowledge_base: Dict[str, Any] = field(default_factory=dict)
-    chapter_analyses: Dict[int, Any] = field(default_factory=dict)
-
-    # IP 生成层
-    character_ips: Dict[str, Dict] = field(default_factory=dict)
-    visual_assets: Dict[str, List[Dict]] = field(default_factory=dict)
-    story_bible: Optional[Any] = None
-
-    # 兼容容器
-    creation: Dict[str, Any] = field(default_factory=dict)
-
-    # Agent 间消息与路由
-    agent_messages: List[Dict] = field(default_factory=list)
-    routing_suggestions: List[Dict] = field(default_factory=list)
-
-    # 控制字段
-    error_message: str = ""
-    human_feedback: Optional[str] = None
-    should_pause: bool = False
-    last_node: str = ""
-
-    def __post_init__(self):
-        # 兼容旧数据：确保 creation 中有 chapters 引用
-        if isinstance(self.creation, dict):
-            self.creation.setdefault("chapters", self.chapters)
-            self.creation.setdefault("chapter_outlines", {})
-            self.creation.setdefault("chapter_summaries", {})
-            self.creation.setdefault("extraction_notes", {})
-        else:
-            self.creation = {"chapters": self.chapters}
-
-    def get_current_chapter_status(self):
-        """兼容 NovelState 方法"""
-        from core.models.chapter import ChapterStatus
-        return self.chapter_status.get(self.current_chapter, ChapterStatus.PENDING)
-
-    def copy(self):
-        """兼容 NovelState 方法，深拷贝"""
-        import copy
-        return copy.deepcopy(self)
+# 使用单一状态模型，避免 PipelineState 与 NovelState 漂移。
+PipelineState = NovelState
 
 
 class NovelPipeline:
@@ -213,7 +141,7 @@ class NovelPipeline:
             message_bus=self.message_bus
         )
 
-        workflow = StateGraph(PipelineState)
+        workflow = StateGraph(NovelState)
 
         if self.use_outline_refinement:
             workflow.add_node("outline_refiner", self._outline_refiner)
@@ -262,7 +190,7 @@ class NovelPipeline:
 
     def _wrap_agent_invoke(self, agent, node_name: str):
         """包装 Agent.invoke（当前 Agents 仍使用旧 NovelState，后续逐步迁移）"""
-        def invoke(state: PipelineState) -> PipelineState:
+        def invoke(state: NovelState) -> NovelState:
             agent.state = state
             agent._current_chapter = state.current_chapter
 
@@ -279,7 +207,7 @@ class NovelPipeline:
             return result
         return invoke
 
-    def _outline_refiner(self, state: PipelineState) -> PipelineState:
+    def _outline_refiner(self, state: NovelState) -> NovelState:
         """大纲细化阶段：生成章级细纲"""
         print(f"📝 大纲细化阶段：第{state.current_chapter}章")
 
@@ -323,7 +251,7 @@ class NovelPipeline:
 
         return state
 
-    def _review_router(self, state: PipelineState) -> str:
+    def _review_router(self, state: NovelState) -> str:
         """审稿路由"""
         if state.error_message:
             print(f"❌ 错误：{state.error_message}")
@@ -360,7 +288,7 @@ class NovelPipeline:
 
         return "revise"
 
-    def _proofread_router(self, state: PipelineState) -> str:
+    def _proofread_router(self, state: NovelState) -> str:
         """校对路由"""
         sm = get_storage_manager()
         proofreads = sm.load_proofreads(state.novel_id)
@@ -378,7 +306,7 @@ class NovelPipeline:
         print(f"📝 第{state.current_chapter}章校对发现问题，返回修改")
         return "fail"
 
-    def _knowledge_extractor(self, state: PipelineState) -> PipelineState:
+    def _knowledge_extractor(self, state: NovelState) -> NovelState:
         """知识萃取（阶段二）"""
         print(f"🔍 萃取第{state.current_chapter}章知识...")
 
@@ -413,7 +341,7 @@ class NovelPipeline:
         state.current_stage = PipelineStage.EXTRACTION
         return state
 
-    def _ip_designer(self, state: PipelineState) -> PipelineState:
+    def _ip_designer(self, state: NovelState) -> NovelState:
         """IP生成（阶段三）"""
         print(f"🎨 生成 IP 资产...")
 
@@ -443,7 +371,7 @@ class NovelPipeline:
         state.current_stage = PipelineStage.IP_GENERATION
         return state
 
-    def _save_checkpoint(self, state: PipelineState, node_name: str):
+    def _save_checkpoint(self, state: NovelState, node_name: str):
         """保存检查点（只通过 StorageManager 保存，不写旧格式）"""
         sm = get_storage_manager()
         meta = sm.load_novel_meta(state.novel_id)
@@ -473,14 +401,14 @@ class NovelPipeline:
         except Exception as e:
             print(f"⚠️ 保存 pipeline 检查点失败: {e}")
 
-    def load_checkpoint(self, novel_id: str, chapter: int) -> Optional[PipelineState]:
+    def load_checkpoint(self, novel_id: str, chapter: int) -> Optional[NovelState]:
         """从 StorageManager 恢复状态"""
         sm = get_storage_manager()
         meta = sm.load_novel_meta(novel_id)
         if not meta:
             return None
 
-        state = PipelineState(
+        state = NovelState(
             novel_id=novel_id,
             current_chapter=chapter,
         )
@@ -501,7 +429,7 @@ class NovelPipeline:
 
         return state
 
-    def resume(self, novel_id: str, chapter: int, from_node: Optional[str] = None) -> PipelineState:
+    def resume(self, novel_id: str, chapter: int, from_node: Optional[str] = None) -> NovelState:
         """从检查点恢复并继续执行"""
         state = self.load_checkpoint(novel_id, chapter)
         if not state:
@@ -555,7 +483,7 @@ class NovelPipeline:
 
         return sorted(checkpoints)
 
-    def run(self, initial_state: PipelineState) -> PipelineState:
+    def run(self, initial_state: NovelState) -> NovelState:
         """运行 Pipeline（只通过 StorageManager 持久化）"""
         print(f"🚀 启动 StoryForge Pipeline")
 
@@ -575,12 +503,12 @@ class NovelPipeline:
 
         result_data = self.workflow.invoke(initial_state)
 
-        # 将 LangGraph 返回的 dict 转换回 PipelineState 对象
+        # 将 LangGraph 返回的 dict 转换回 NovelState 对象
         if isinstance(result_data, dict):
             # 从字典安全构造，自动过滤不在 dataclass 中的字段
-            valid_fields = {f.name for f in PipelineState.__dataclass_fields__.values()}
+            valid_fields = {f.name for f in NovelState.__dataclass_fields__.values()}
             filtered = {k: v for k, v in result_data.items() if k in valid_fields}
-            result = PipelineState(**filtered)
+            result = NovelState(**filtered)
         else:
             result = result_data
 
@@ -590,12 +518,13 @@ class NovelPipeline:
 
         return result
 
-    def run_batch(self, state: PipelineState, chapters: list) -> Dict[int, PipelineState]:
+    def run_batch(self, state: NovelState, chapters: list) -> Dict[int, NovelState]:
         """批量创作多章"""
         results = {}
         for chapter_num in chapters:
-            state.current_chapter = chapter_num
-            results[chapter_num] = self.run(state)
+            chapter_state = state.copy()
+            chapter_state.current_chapter = chapter_num
+            results[chapter_num] = self.run(chapter_state)
         return results
 
     def visualize(self):

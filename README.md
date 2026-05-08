@@ -76,39 +76,11 @@ uvicorn web_console.app:app --reload --port 8787
 
 ## 配置
 
-StoryForge 使用两套配置系统（历史原因，两者共存）。完整说明见 [docs/config.md](docs/config.md)。
+StoryForge 当前使用单一配置文件：`~/.storyforge/storyforge.yaml`。
 
-### 配置系统一：web_console (JSON)
-
-用于 FastAPI 操作界面。
-
-- 文件：`~/.storyforge/config.json`
-- 加载入口：`core/settings.py`
-- 优先级：环境变量 > 配置文件
-
-```json
-{
-  "console": {
-    "max_running_tasks": 2,
-    "default_command": "python examples/debug_pipeline.py",
-    "template_file": "~/work/StoryForge/web_console/templates.json"
-  },
-  "debug": {
-    "output_dir": "~/work/StoryForge/debug_output"
-  },
-  "pipeline": {
-    "default_target_word_count": 3000
-  }
-}
-```
-
-### 配置系统二：backend (YAML)
-
-用于 Flask API 服务和核心 Pipeline。
-
-- 文件：`~/.storyforge/storyforge.yaml`（推荐）
+- 配置文件：`~/.storyforge/storyforge.yaml`
 - 加载入口：`core/config.py`
-- 优先级：`$STORYFORGE_CONFIG` > `~/.storyforge/storyforge.yaml` > 项目根目录配置 > 默认值
+- 适用范围：Flask backend、FastAPI web_console、核心 Pipeline
 
 ```yaml
 llm:
@@ -127,23 +99,26 @@ server:
     host: 0.0.0.0
     port: 5089
     cors_origins: "*"
+  debug: false
 
 pipeline:
     max_review_rounds: 3
     default_target_word_count: 3000
+
+console:
+  max_running_tasks: 3
+  default_command: python examples/demo_pipeline.py
+  template_file: ~/.storyforge/templates.json
+
+debug:
+  output_dir: debug_output
 ```
 
 ### 诊断命令
 
 ```bash
-# 查看当前 YAML 配置（含来源）
+# 查看当前生效配置（含来源）
 python -m core.config
-
-# 查看当前 JSON 配置（含来源）
-python -m core.settings
-
-# 仅校验 JSON 配置（成功返回 0，失败非 0）
-python -m core.settings --check
 ```
 
 ---
@@ -158,8 +133,7 @@ StoryForge/
 │   ├── schema.py           # 结构化输出 Schema
 │   ├── memory.py           # 记忆系统
 │   ├── prompt_assembler.py # 动态 Prompt 组装
-│   ├── config.py           # YAML 配置（backend）
-│   ├── settings.py         # JSON 配置（web_console）
+│   ├── config.py           # YAML 配置（全系统）
 │   └── utils/              # 工具函数
 ├── agents/                 # Agent 角色定义
 │   └── creation_agents.py  # Writer / Reviewer / Reviser / Proofreader
@@ -170,8 +144,7 @@ StoryForge/
 │   ├── extraction/         # 知识萃取
 │   └── ip_generation/      # IP 生成
 ├── backend/                # Flask 后端 API
-│   ├── app.py              # API 服务
-│   └── storage.py          # JSON 存储层
+│   └── app.py              # API 服务
 ├── client/                 # React 前端
 │   ├── src/
 │   │   ├── App.jsx

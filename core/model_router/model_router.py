@@ -13,7 +13,6 @@ from typing import Dict, List, Optional, Callable, Any, Iterator
 from enum import Enum
 import time
 import json
-import os
 
 
 class TaskType(Enum):
@@ -113,13 +112,8 @@ class ModelRouter:
     def __init__(self, config_path: Optional[str] = None):
         self.models: Dict[str, ModelConfig] = {}
         self.clients: Dict[str, Callable] = {}
-        self.task_mapping: Dict[TaskType, List[str]] = {}
-        
-        # 加载配置
-        if config_path and os.path.exists(config_path):
-            self._load_config(config_path)
-        else:
-            self.task_mapping = self.DEFAULT_TASK_MAPPING.copy()
+        self.task_mapping: Dict[TaskType, List[str]] = self.DEFAULT_TASK_MAPPING.copy()
+        self._load_config(config_path)
     
     def register_model(
         self,
@@ -396,36 +390,47 @@ class ModelRouter:
         # 调用
         return client(prompt, temperature=temp, max_tokens=tokens, **kwargs)
     
-    def _load_config(self, config_path: str):
-        """从文件加载配置"""
-        with open(config_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        # 加载模型配置
-        for model_data in data.get('models', []):
-            config = ModelConfig(
-                name=model_data['name'],
-                provider=ModelProvider(model_data['provider']),
-                model_id=model_data['model_id'],
-                api_key=model_data.get('api_key'),
-                api_base=model_data.get('api_base'),
-                max_tokens=model_data.get('max_tokens', 4096),
-                temperature=model_data.get('temperature', 0.7),
-                timeout=model_data.get('timeout', 60),
-                retry_count=model_data.get('retry_count', 3),
-                task_preferences={
-                    TaskType(k): v
-                    for k, v in model_data.get('task_preferences', {}).items()
-                },
-                cost_per_1k_input=model_data.get('cost_per_1k_input', 0),
-                cost_per_1k_output=model_data.get('cost_per_1k_output', 0),
-                enabled=model_data.get('enabled', True)
-            )
-            self.register_model(config)
-        
-        # 加载任务映射
-        for task_str, model_names in data.get('task_mapping', {}).items():
-            self.task_mapping[TaskType(task_str)] = model_names
+    def _load_config(self, _config_path: Optional[str] = None):
+        """从 StoryForge 主配置加载模型配置（~/.storyforge/storyforge.yaml）。"""
+        # 延迟导入，避免模块初始化阶段的循环依赖。
+        from core.config import get_config
+
+        cfg = get_config()
+        if not cfg.llm.api_key:
+            return
+
+        provider_map = {
+            "openai": ModelProvider.OPENAI,
+            "anthropic": ModelProvider.ANTHROPIC,
+            "azure": ModelProvider.AZURE,
+            "local": ModelProvider.LOCAL,
+            "custom": ModelProvider.CUSTOM,
+        }
+        provider = provider_map.get((cfg.llm.provider or "").lower(), ModelProvider.CUSTOM)
+
+        model_name = cfg.llm.model or f"{cfg.llm.provider}-default"
+        self.register_model(ModelConfig(
+            name=model_name,
+            provider=provider,
+            model_id=model_name,
+            api_key=cfg.llm.api_key,
+            api_base=cfg.llm.base_url or None,
+            temperature=cfg.llm.temperature,
+            timeout=cfg.llm.timeout,
+            task_preferences={
+                TaskType.WRITING: 0.8,
+                TaskType.OUTLINE: 0.8,
+                TaskType.REVIEW: 0.8,
+                TaskType.PROOFREAD: 0.8,
+                TaskType.IP_GENERATION: 0.8,
+                TaskType.EXTRACTION: 0.8,
+                TaskType.GENERAL: 0.8,
+            },
+            enabled=True,
+        ))
+
+        for task in TaskType:
+            self.task_mapping[task] = [model_name]
     
     def save_config(self, config_path: str):
         """保存配置到文件"""
@@ -461,56 +466,6 @@ class ModelRouter:
 # ========== 便捷函数 ==========
 
 def create_default_router() -> ModelRouter:
-    """创建默认路由器（使用环境变量配置）"""
+    """创建默认路由器（使用 StoryForge YAML 配置）。"""
     router = ModelRouter()
-    
-    # 从环境变量读取配置
-    openai_key = os.environ.get('OPENAI_API_KEY')
-    anthropic_key = os.environ.get('ANTHROPIC_API_KEY')
-    
-    if openai_key:
-        router.register_model(ModelConfig(
-            name="gpt-4",
-            provider=ModelProvider.OPENAI,
-            model_id="gpt-4",
-            api_key=openai_key,
-            task_preferences={
-                TaskType.WRITING: 0.9,
-                TaskType.OUTLINE: 0.8,
-                TaskType.REVIEW: 0.8,
-                TaskType.PROOFREAD: 0.7
-            },
-            cost_per_1k_input=0.03,
-            cost_per_1k_output=0.06
-        ))
-        
-        router.register_model(ModelConfig(
-            name="gpt-3.5-turbo",
-            provider=ModelProvider.OPENAI,
-            model_id="gpt-3.5-turbo",
-            api_key=openai_key,
-            task_preferences={
-                TaskType.GENERAL: 0.8,
-                TaskType.EXTRACTION: 0.7,
-                TaskType.PROOFREAD: 0.6
-            },
-            cost_per_1k_input=0.0015,
-            cost_per_1k_output=0.002
-        ))
-    
-    if anthropic_key:
-        router.register_model(ModelConfig(
-            name="claude-3-opus",
-            provider=ModelProvider.ANTHROPIC,
-            model_id="claude-3-opus-20240229",
-            api_key=anthropic_key,
-            task_preferences={
-                TaskType.REVIEW: 0.9,
-                TaskType.IP_GENERATION: 0.9,
-                TaskType.WRITING: 0.8
-            },
-            cost_per_1k_input=0.015,
-            cost_per_1k_output=0.075
-        ))
-    
     return router

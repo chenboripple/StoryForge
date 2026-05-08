@@ -443,7 +443,7 @@ app = create_app()
 
 if __name__ == "__main__":
     cfg = get_config()
-    port = int(os.environ.get("PORT", cfg.server.port))
-    host = os.environ.get("HOST", cfg.server.host)
-    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    port = int(cfg.server.port)
+    host = cfg.server.host
+    debug = bool(cfg.server.debug)
     app.run(host=host, port=port, debug=debug)

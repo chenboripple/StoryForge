@@ -106,7 +106,7 @@ pipeline = NovelPipeline(
 3. `ReviserAgent.invoke` 不修改轮次，修改后回到 `reviewer` 节点再次计数
 
 最大轮次默认值：
-- 来自配置：`core/settings.py` → `pipeline.default_target_word_count`（注：配置项命名有待统一）
+- 来自配置：`core/config.py` → `pipeline.max_review_rounds`
 - 可在 `NovelState.max_review_rounds` 中覆盖
 
 ## 断点续跑 (Checkpoint)
@@ -191,7 +191,9 @@ from pipeline.novel_pipeline import create_pipeline
 pipeline = create_pipeline(
     llm_client=llm,
     use_memory=True,
-    use_outline_refinement=True
+    use_outline_refinement=True,
+    use_message_bus=True,
+    use_agent_routing=False
 )
 ```
 
@@ -217,8 +219,8 @@ results = pipeline.run_batch(state, chapters=[1, 2, 3])
 # results[2] → 第2章的 NovelState
 ```
 
-- 每章使用 `state.copy()` 深拷贝，**各章状态完全隔离**
-- 不阻塞：每章独立运行，失败不影响其他章节
+- 当前实现会复用同一个 `state` 对象并逐章修改 `current_chapter`
+- 当前实现不是并行执行，且不保证章节间状态完全隔离
 
 ### `NovelPipeline.resume(novel_id, chapter, from_node)` — 断点续跑
 

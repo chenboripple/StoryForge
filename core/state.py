@@ -130,6 +130,7 @@ class NovelState:
     error_message: str = ""
     human_feedback: Optional[str] = None
     should_pause: bool = False
+    last_node: str = ""
 
     def __post_init__(self):
         # 兼容旧数据：如果 creation 中有 chapters 且 self.chapters 为空，迁移一次

@@ -43,8 +43,7 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  core/schema.py          ReviewResult, ProofreadResult, ChapterContent│
 │  core/memory.py          StoryMemory (事件/人物/世界状态)            │
 │  core/prompt_assembler.py  PromptAssembler (动态Prompt+人味化)       │
-│  core/settings.py        ~/.storyforge/config.json  (web_console用)  │
-│  core/config.py          ~/.storyforge/storyforge.yaml  (backend用)  │
+│  core/config.py          ~/.storyforge/storyforge.yaml  (全系统配置)  │
 ├─────────────────────────────────────────────────────────────────────┤
 │                       stages/ 模块                                   │
 │  stages/outline/         OutlineGenerator (章级细纲生成)            │
@@ -55,19 +54,11 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 
 ## 配置系统说明
 
-StoryForge 使用两套配置系统（历史原因，两者共存）：
+StoryForge 使用单一配置文件：
 
-### 1. web_console 配置 (JSON)
-- 文件位置：`~/.storyforge/config.json`
-- 加载入口：`core/settings.py`
-- 用途：FastAPI 操作界面、任务管理、IP 生成
-- 环境变量前缀：`STORYFORGE_*`
-
-### 2. backend 配置 (YAML)
 - 文件位置：`~/.storyforge/storyforge.yaml`
 - 加载入口：`core/config.py`
-- 用途：Flask API 服务、数据存储
-- 环境变量前缀：`STORYFORGE_CONFIG`
+- 用途：Flask API、FastAPI 操作界面、Pipeline 与存储路径
 
 ## 设计原则
 
