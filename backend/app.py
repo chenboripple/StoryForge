@@ -70,6 +70,43 @@ def create_app() -> Flask:
         sm = _get_sm()
         return jsonify(sm.list_novels())
 
+    @app.post("/api/novels")
+    def create_novel():
+        """创建新小说"""
+        data = request.get_json()
+        if not data or not data.get("novel_id"):
+            return jsonify({"error": "缺少小说ID"}), 400
+        
+        novel_id = data["novel_id"]
+        
+        sm = _get_sm()
+        
+        # 检查是否已存在
+        if sm.novel_exists(novel_id):
+            return jsonify({"error": "小说已存在", "novel_id": novel_id}), 409
+        
+        # 创建新小说
+        meta = NovelMeta(
+            novel_id=novel_id,
+            novel_title=data.get("novel_title", novel_id),
+            genre=data.get("genre", "未分类"),
+            concept=data.get("concept", ""),
+            target_word_count=data.get("target_word_count", 3000),
+            current_stage=PipelineStage.CREATION,
+            current_chapter=1,
+            total_chapters=0,
+            approved_chapters=0,
+        )
+        
+        sm.save_novel_meta(novel_id, meta)
+        sm.rebuild_index()
+        
+        return jsonify({
+            "success": True,
+            "novel_id": novel_id,
+            "novel_title": meta.novel_title,
+        })
+
     @app.get("/api/novels/<novel_id>")
     def get_novel(novel_id: str):
         sm = _get_sm()
