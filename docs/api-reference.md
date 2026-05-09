@@ -434,7 +434,7 @@ class StorageConfig:
 @dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
-    port: int = 5089
+    port: int = 8787
     cors_origins: str = "*"
 
 @dataclass
@@ -663,9 +663,10 @@ sm.delete_novel(novel_id: str) -> bool
 sm.rebuild_index() -> int
 ```
 
-### `backend/app.py` (Flask API)
+### `backend/app.py` (Flask API, deprecated)
 
-后端通过 Flask 提供 API，默认端口 5089。
+`backend/app.py` 已下线，不再承载业务 API；仅返回迁移提示（HTTP 410）。
+原有 API 已并入 `web_console/app.py`（FastAPI，默认端口 8787）。
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
@@ -797,6 +798,9 @@ FastAPI 操作界面，默认端口 8787。
 - 并发上限控制
 - 日志下载
 - 人物 IP 操作区（手动触发）
+- 统一业务 API 网关（包含原 backend 接口）
+
+依赖注入策略：每请求 scoped（通过 `Depends` 创建独立 `StorageManager`）。
 
 启动命令：
 ```bash

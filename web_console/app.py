@@ -15,14 +15,21 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from core.config import get_config
-from core.storage import get_storage_manager
+from core.storage import StorageConfig, StorageManager
+from core.models import (
+    Chapter,
+    ChapterStatus,
+    NovelMeta,
+    PipelineStage,
+)
+from core.ai_assistant import GenerationRequest, generate_suggestion
 from core.models.video_assets import VideoState
 from stages.video_script.video_script_generator import VideoScriptGenerator
 from stages.video_bible.visual_bible_builder import VisualBibleBuilder
@@ -30,7 +37,20 @@ from stages.video_assets.video_asset_generator import VideoAssetGenerator
 from core.video import StubImageProvider, StubEmbeddingProvider, VideoConsistencyService
 
 _cfg = get_config()
-_sm = get_storage_manager()
+
+
+def _new_storage_manager(cfg=None) -> StorageManager:
+    runtime_cfg = cfg or _cfg
+    return StorageManager(StorageConfig(data_dir=runtime_cfg.data_dir_abs))
+
+
+def get_app_config_dep():
+    return get_config()
+
+
+def get_storage_manager_dep(cfg=Depends(get_app_config_dep)) -> StorageManager:
+    # 每请求新建 StorageManager，避免跨请求共享缓存状态。
+    return _new_storage_manager(cfg)
 
 
 @dataclass
@@ -94,6 +114,30 @@ class CheckVideoConsistencyRequest(BaseModel):
     face_consistency_min: float = Field(default=0.82, ge=0.0, le=1.0)
     age_transition_min: float = Field(default=0.58, ge=0.0, le=1.0)
     scene_structure_min: float = Field(default=0.76, ge=0.0, le=1.0)
+
+
+class AiGenerateRequest(BaseModel):
+    prompt: str = ""
+    step: str = "concept"
+    context: Dict[str, Any] = Field(default_factory=dict)
+    temperature: float = 0.7
+
+
+class CreateNovelRequest(BaseModel):
+    novel_id: str
+    novel_title: Optional[str] = None
+    genre: str = "未分类"
+    concept: str = ""
+    target_word_count: int = 3000
+
+
+class SaveImportedRequest(BaseModel):
+    novel_id: Optional[str] = None
+    title: str = "未命名"
+    author: str = ""
+    genre: str = "未分类"
+    concept: str = ""
+    chapters: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 @dataclass
@@ -449,21 +493,21 @@ def _split_sentences(text: str) -> List[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def _discover_novels(project_dir: str) -> List[dict]:
+def _discover_novels(project_dir: str, sm: StorageManager) -> List[dict]:
     # project_dir 保留用于接口兼容，小说数据统一从 StorageManager 读取。
     _ = project_dir
 
     novels: List[dict] = []
-    for entry in _sm.list_novels():
+    for entry in sm.list_novels():
         novel_id = str(entry.get("novel_id") or "").strip()
         if not novel_id:
             continue
 
         title = str(entry.get("novel_title") or novel_id)
-        chapters = _sm.load_chapters(novel_id)
+        chapters = sm.load_chapters(novel_id)
 
         character_names: List[str] = []
-        char_graph = _sm.load_characters(novel_id)
+        char_graph = sm.load_characters(novel_id)
         if char_graph and getattr(char_graph, "characters", None):
             character_names = [
                 c.name.strip() for c in char_graph.characters
@@ -547,13 +591,13 @@ def _upsert_vector_docs(project_dir: str, docs: List[dict]) -> int:
     return upserted
 
 
-def _load_snapshot(project_dir: str, novel_id: str) -> dict:
+def _load_snapshot(project_dir: str, novel_id: str, sm: StorageManager) -> dict:
     _ = project_dir
-    meta = _sm.load_novel_meta(novel_id)
+    meta = sm.load_novel_meta(novel_id)
     if not meta:
         raise RuntimeError(f"未找到小说: {novel_id}")
 
-    chapters = _sm.load_chapters(novel_id)
+    chapters = sm.load_chapters(novel_id)
     chapter_payload = {
         str(ch_num): chapter.content
         for ch_num, chapter in chapters.items()
@@ -609,7 +653,8 @@ def _run_ip_task(task_id: str) -> None:
             task.started_at = _now()
 
     try:
-        snapshot = _load_snapshot(task.project_dir, task.novel_id)
+        sm = _new_storage_manager()
+        snapshot = _load_snapshot(task.project_dir, task.novel_id, sm)
         novel_title = str(snapshot.get("novel_title") or task.novel_id)
 
         output_dir = _ip_asset_dir(task.project_dir, task.novel_id)
@@ -688,17 +733,17 @@ def _run_ip_task(task_id: str) -> None:
             _save_runtime_state_unlocked()
 
 
-def _generate_video_script_assets(project_dir: str, novel_id: str) -> dict:
+def _generate_video_script_assets(project_dir: str, novel_id: str, sm: StorageManager) -> dict:
     _ = project_dir
-    meta = _sm.load_novel_meta(novel_id)
+    meta = sm.load_novel_meta(novel_id)
     if not meta:
         raise RuntimeError(f"未找到小说: {novel_id}")
 
-    chapters = _sm.load_chapters(novel_id)
+    chapters = sm.load_chapters(novel_id)
     if not chapters:
         raise RuntimeError(f"小说无章节内容: {novel_id}")
 
-    chars = _sm.load_characters(novel_id)
+    chars = sm.load_characters(novel_id)
 
     script_generator = VideoScriptGenerator()
     bible_builder = VisualBibleBuilder()
@@ -712,17 +757,17 @@ def _generate_video_script_assets(project_dir: str, novel_id: str) -> dict:
     bible = bible_builder.build(novel_id, script, chars)
     manifest = asset_generator.generate(novel_id, script, bible)
 
-    _sm.save_video_script(novel_id, script)
-    _sm.save_visual_bible(novel_id, bible)
-    _sm.save_video_manifest(novel_id, manifest)
+    sm.save_video_script(novel_id, script)
+    sm.save_visual_bible(novel_id, bible)
+    sm.save_video_manifest(novel_id, manifest)
 
-    state = _sm.load_video_state(novel_id) or VideoState(novel_id=novel_id)
+    state = sm.load_video_state(novel_id) or VideoState(novel_id=novel_id)
     state.script = script
     state.visual_bible = bible
     state.manifest = manifest
     state.status = "asseted"
     state.error_message = ""
-    _sm.save_video_state(novel_id, state)
+    sm.save_video_state(novel_id, state)
 
     return {
         "novel_id": novel_id,
@@ -733,10 +778,10 @@ def _generate_video_script_assets(project_dir: str, novel_id: str) -> dict:
     }
 
 
-def _check_video_consistency(project_dir: str, novel_id: str, thresholds: dict) -> dict:
+def _check_video_consistency(project_dir: str, novel_id: str, thresholds: dict, sm: StorageManager) -> dict:
     _ = project_dir
-    bible = _sm.load_visual_bible(novel_id)
-    manifest = _sm.load_video_manifest(novel_id)
+    bible = sm.load_visual_bible(novel_id)
+    manifest = sm.load_video_manifest(novel_id)
     if not bible or not manifest:
         raise RuntimeError("缺少视觉圣经或资产索引，请先生成视频剧本与资产")
 
@@ -747,13 +792,13 @@ def _check_video_consistency(project_dir: str, novel_id: str, thresholds: dict) 
         manifest=manifest,
         threshold_overrides=thresholds,
     )
-    _sm.save_video_consistency_report(novel_id, report)
+    sm.save_video_consistency_report(novel_id, report)
 
-    state = _sm.load_video_state(novel_id) or VideoState(novel_id=novel_id)
+    state = sm.load_video_state(novel_id) or VideoState(novel_id=novel_id)
     state.consistency_report = report
     state.status = "asseted" if report.passed else "failed"
     state.error_message = "\n".join(report.fallback_reasons) if report.fallback_reasons else ""
-    _sm.save_video_state(novel_id, state)
+    sm.save_video_state(novel_id, state)
 
     return report.to_dict()
 
@@ -1197,12 +1242,39 @@ loadIpTasks();
 
 
 @app.get("/api/config")
-async def get_config() -> dict:
+async def get_console_config() -> dict:
     return {
         "max_running_tasks": MAX_RUNNING_TASKS,
         "configured_max_running_tasks": _cfg.console.max_running_tasks,
         "running_tasks": _running_tasks_count(),
         "queued_tasks": _queue_size(),
+    }
+
+
+@app.get("/api/health")
+async def api_health(cfg=Depends(get_app_config_dep)) -> dict:
+    return {
+        "status": "ok",
+        "config_path": cfg.config_path,
+        "data_dir": cfg.data_dir_abs,
+    }
+
+
+@app.post("/api/ai/generate")
+async def ai_generate(req: AiGenerateRequest) -> dict:
+    payload = GenerationRequest(
+        prompt=req.prompt,
+        step=req.step,
+        context=req.context,
+        temperature=req.temperature,
+    )
+    resp = generate_suggestion(payload)
+    if not resp.success:
+        raise HTTPException(status_code=500, detail=resp.error or "生成失败")
+    return {
+        "success": True,
+        "content": resp.content,
+        "suggestions": resp.suggestions,
     }
 
 
@@ -1236,23 +1308,335 @@ async def save_template(req: SaveTemplateRequest) -> dict:
 
 
 @app.get("/api/novels")
-async def list_novels(project_dir: str = Query(..., description="项目目录")) -> dict:
+async def list_novels(
+    project_dir: Optional[str] = Query(None, description="项目目录（console模式可选）"),
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> Any:
+    # 兼容 backend 行为：不传 project_dir 时返回索引列表。
+    if project_dir is None or not project_dir.strip():
+        return sm.list_novels()
+
     project_dir = _resolve_project_dir(project_dir)
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
-    return {"novels": _discover_novels(project_dir)}
+    return {"novels": _discover_novels(project_dir, sm)}
+
+
+@app.post("/api/novels")
+async def create_novel(
+    req: CreateNovelRequest,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    novel_id = req.novel_id.strip()
+    if not novel_id:
+        raise HTTPException(status_code=400, detail="缺少小说ID")
+    if sm.novel_exists(novel_id):
+        raise HTTPException(status_code=409, detail=f"小说已存在: {novel_id}")
+
+    meta = NovelMeta(
+        novel_id=novel_id,
+        novel_title=(req.novel_title or novel_id).strip(),
+        genre=req.genre,
+        concept=req.concept,
+        target_word_count=req.target_word_count,
+        current_stage=PipelineStage.CREATION,
+        current_chapter=1,
+        total_chapters=0,
+        approved_chapters=0,
+    )
+    sm.save_novel_meta(novel_id, meta)
+    sm.rebuild_index()
+    return {"success": True, "novel_id": novel_id, "novel_title": meta.novel_title}
+
+
+@app.get("/api/novels/{novel_id}")
+async def get_novel(
+    novel_id: str,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    meta = sm.load_novel_meta(novel_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
+
+    result = meta.to_index_entry()
+    characters_list: List[Dict[str, Any]] = []
+    try:
+        char_graph = sm.load_characters(novel_id)
+        if char_graph and getattr(char_graph, "characters", None):
+            for char in char_graph.characters:
+                char_dict: Dict[str, Any] = {}
+                if hasattr(char, "to_dict"):
+                    try:
+                        char_dict = char.to_dict()
+                    except Exception:
+                        char_dict = {}
+                if not char_dict:
+                    char_dict = {
+                        "id": getattr(char, "character_id", getattr(char, "id", "")),
+                        "character_id": getattr(char, "character_id", ""),
+                        "name": getattr(char, "name", ""),
+                        "description": getattr(char, "description", ""),
+                        "personality": getattr(char, "personality", ""),
+                        "background": getattr(char, "background", ""),
+                        "age": getattr(char, "age", None),
+                        "gender": getattr(char, "gender", ""),
+                    }
+                characters_list.append(char_dict)
+    except Exception:
+        pass
+
+    result["characters"] = characters_list
+    return result
+
+
+@app.get("/api/novels/{novel_id}/chapters")
+async def list_chapters(
+    novel_id: str,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    meta = sm.load_novel_meta(novel_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
+
+    chapters = sm.load_chapters(novel_id)
+    reviews = sm.load_reviews(novel_id)
+
+    result = []
+    for num in sorted(chapters.keys()):
+        ch = chapters[num]
+        review = reviews.get(num)
+        latest = review.get_latest() if review else None
+        result.append(
+            {
+                "chapter_num": num,
+                "title": ch.title,
+                "status": ch.status.value,
+                "word_count": ch.word_count,
+                "preview": ch.get_preview(),
+                "review_rounds": len(review.records) if review else 0,
+                "latest_score": latest.total_score if latest else None,
+                "latest_passed": latest.passed if latest else None,
+            }
+        )
+
+    return {
+        "novel_id": novel_id,
+        "current_chapter": meta.current_chapter,
+        "total_chapters": meta.total_chapters,
+        "chapters": result,
+    }
+
+
+@app.get("/api/novels/{novel_id}/chapters/{chapter_num}")
+async def get_chapter(
+    novel_id: str,
+    chapter_num: int,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    meta = sm.load_novel_meta(novel_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
+
+    chapters = sm.load_chapters(novel_id)
+    ch = chapters.get(chapter_num)
+    if ch is None:
+        raise HTTPException(status_code=404, detail=f"chapter not found: {chapter_num}")
+
+    reviews = sm.load_reviews(novel_id)
+    review = reviews.get(chapter_num)
+    proofreads = sm.load_proofreads(novel_id)
+    proofread = proofreads.get(chapter_num)
+
+    return {
+        "novel_id": novel_id,
+        "chapter_num": chapter_num,
+        "title": ch.title,
+        "status": ch.status.value,
+        "content": ch.content,
+        "word_count": ch.word_count,
+        "reviews": [r.to_dict() for r in (review.records if review else [])],
+        "proofread_records": [p.to_dict() for p in (proofread.records if proofread else [])],
+    }
+
+
+@app.get("/api/import/formats")
+async def list_import_formats() -> dict:
+    return {
+        "formats": [
+            {
+                "type": "text",
+                "name": "纯文本",
+                "extensions": ["txt", "md", "markdown", "html", "htm", "rst", "org"],
+                "description": "直接读取纯文本内容，支持自动章节识别",
+            },
+            {
+                "type": "epub",
+                "name": "EPUB 电子书",
+                "extensions": ["epub"],
+                "description": "解析 EPUB 章节结构和元数据",
+            },
+            {
+                "type": "pdf",
+                "name": "PDF 文档",
+                "extensions": ["pdf"],
+                "description": "提取 PDF 文字内容，扫描件建议使用图片导入",
+            },
+            {
+                "type": "image",
+                "name": "图片（OCR）",
+                "extensions": ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"],
+                "description": "通过 OCR 识别图片中的文字",
+            },
+        ]
+    }
+
+
+@app.post("/api/import/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    chapter_pattern: Optional[str] = Form(None),
+    ocr_language: Optional[str] = Form(None),
+    merge_chapters: Optional[bool] = Form(None),
+) -> dict:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="未选择文件")
+
+    import tempfile
+
+    upload_dir = os.path.join(tempfile.gettempdir(), "storyforge_uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    safe_filename = os.path.basename(file.filename)
+    filepath = os.path.join(upload_dir, safe_filename)
+
+    content = await file.read()
+    with open(filepath, "wb") as fout:
+        fout.write(content)
+
+    options: Dict[str, Any] = {}
+    if chapter_pattern:
+        options["chapter_pattern"] = chapter_pattern
+    if ocr_language:
+        options["ocr_language"] = ocr_language
+    if merge_chapters is not None:
+        options["merge_chapters"] = merge_chapters
+
+    from stages.importer.novel_importer import NovelImporter
+
+    importer = NovelImporter()
+    result = importer.parse(filepath, **options)
+
+    try:
+        os.unlink(filepath)
+    except Exception:
+        pass
+
+    if not result.success:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "success": False,
+                "errors": result.errors,
+                "warnings": result.warnings,
+            },
+        )
+
+    return {
+        "success": True,
+        "preview": {
+            "title": result.novel_title,
+            "author": result.author,
+            "genre": result.genre,
+            "total_chapters": result.total_chapters,
+            "total_word_count": result.total_word_count,
+            "chapters": [
+                {
+                    "chapter_num": ch.chapter_num,
+                    "title": ch.title,
+                    "word_count": ch.word_count,
+                    "preview": ch.content[:200] if ch.content else "",
+                }
+                for ch in result.chapters[:10]
+            ],
+        },
+        "warnings": result.warnings,
+        "full_result": {
+            "chapters": [
+                {
+                    "chapter_num": ch.chapter_num,
+                    "title": ch.title,
+                    "content": ch.content,
+                    "word_count": ch.word_count,
+                }
+                for ch in result.chapters
+            ],
+            "metadata": result.metadata,
+        },
+    }
+
+
+@app.post("/api/import/save")
+async def save_imported(
+    req: SaveImportedRequest,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    if not req.chapters:
+        raise HTTPException(status_code=400, detail="缺少章节数据")
+
+    novel_id = (req.novel_id or "").strip()
+    if not novel_id:
+        from datetime import datetime
+
+        safe_title = "".join(c for c in req.title if c.isalnum() or c == "_")
+        novel_id = f"{safe_title or 'imported'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    meta = NovelMeta(
+        novel_id=novel_id,
+        novel_title=req.title,
+        genre=req.genre,
+        concept=req.concept,
+        target_word_count=max(
+            sum(len(ch.get("content", "")) for ch in req.chapters) // max(len(req.chapters), 1),
+            3000,
+        ),
+        current_stage=PipelineStage.CREATION,
+    )
+    sm.save_novel_meta(novel_id, meta)
+
+    chapters: Dict[int, Chapter] = {}
+    for ch in req.chapters:
+        num = int(ch.get("chapter_num", 1))
+        chapters[num] = Chapter(
+            novel_id=novel_id,
+            chapter_num=num,
+            title=str(ch.get("title", "")),
+            content=str(ch.get("content", "")),
+            status=ChapterStatus.DRAFT,
+        )
+    sm.save_chapters(novel_id, chapters)
+
+    meta.total_chapters = len(chapters)
+    meta.draft_chapters = len(chapters)
+    sm.save_novel_meta(novel_id, meta)
+
+    return {
+        "success": True,
+        "novel_id": novel_id,
+        "title": req.title,
+        "chapter_count": len(chapters),
+    }
 
 
 @app.get("/api/novels/{novel_id}/characters")
 async def list_novel_characters(
     novel_id: str,
     project_dir: str = Query(..., description="项目目录"),
+    sm: StorageManager = Depends(get_storage_manager_dep),
 ) -> dict:
     project_dir = _resolve_project_dir(project_dir)
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
 
-    for item in _discover_novels(project_dir):
+    for item in _discover_novels(project_dir, sm):
         if item["novel_id"] == novel_id:
             return {"novel_id": novel_id, "characters": item.get("characters", [])}
 
@@ -1288,7 +1672,10 @@ async def generate_ip(req: GenerateIpRequest) -> dict:
 
 
 @app.post("/api/video/script/generate")
-async def generate_video_script(req: GenerateVideoScriptRequest) -> dict:
+async def generate_video_script(
+    req: GenerateVideoScriptRequest,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
     project_dir = _resolve_project_dir(req.project_dir)
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
@@ -1298,7 +1685,7 @@ async def generate_video_script(req: GenerateVideoScriptRequest) -> dict:
         raise HTTPException(status_code=400, detail="novel_id 不能为空")
 
     try:
-        result = _generate_video_script_assets(project_dir, novel_id)
+        result = _generate_video_script_assets(project_dir, novel_id, sm)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -1306,7 +1693,10 @@ async def generate_video_script(req: GenerateVideoScriptRequest) -> dict:
 
 
 @app.post("/api/video/consistency/check")
-async def check_video_consistency(req: CheckVideoConsistencyRequest) -> dict:
+async def check_video_consistency(
+    req: CheckVideoConsistencyRequest,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
     project_dir = _resolve_project_dir(req.project_dir)
     if not os.path.isdir(project_dir):
         raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
@@ -1324,6 +1714,7 @@ async def check_video_consistency(req: CheckVideoConsistencyRequest) -> dict:
                 "age_transition_min": req.age_transition_min,
                 "scene_structure_min": req.scene_structure_min,
             },
+            sm=sm,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1332,8 +1723,11 @@ async def check_video_consistency(req: CheckVideoConsistencyRequest) -> dict:
 
 
 @app.get("/api/video/consistency/{novel_id}")
-async def get_video_consistency(novel_id: str) -> dict:
-    report = _sm.load_video_consistency_report(novel_id)
+async def get_video_consistency(
+    novel_id: str,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    report = sm.load_video_consistency_report(novel_id)
     if not report:
         raise HTTPException(status_code=404, detail="未找到一致性报告")
     return {"ok": True, "report": report.to_dict()}

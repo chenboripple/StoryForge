@@ -66,7 +66,7 @@ storage:
 # ==================== 服务器配置 ====================
 server:
   host: 0.0.0.0
-  port: 5089
+  port: 8787
   cors_origins: "*"
   debug: false
 

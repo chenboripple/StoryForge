@@ -13,10 +13,10 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  - 创作进度监控                                                      │
 │  - 人物 IP 操作区                                                    │
 │  - 日志查看                                                          │
+│  - 统一 API 网关（原 backend API 已并入）                            │
 │                                                                      │
-│  backend/  (Flask, 端口 5089)                                        │
-│  - 小说清单/详情 API                                                 │
-│  - 静态文件服务                                                      │
+│  backend/  (Flask, 已下线)                                           │
+│  - 仅保留迁移提示（410 Gone）                                        │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         存储层                                       │
 │  - ~/.storyforge/data/  (小说数据, YAML 配置决定)                    │
@@ -60,7 +60,17 @@ StoryForge 使用单一配置文件：
 
 - 文件位置：`~/.storyforge/storyforge.yaml`
 - 加载入口：`core/config.py`
-- 用途：Flask API、FastAPI 操作界面、Pipeline 与存储路径
+- 用途：FastAPI API 网关、Pipeline 与存储路径
+
+## 依赖注入策略
+
+网关采用 **每请求 scoped DI**：
+
+- 每个 HTTP 请求通过 FastAPI `Depends` 创建独立 `StorageManager` 实例
+- 不在请求之间共享 `StorageManager` 内存缓存，降低跨请求状态污染风险
+- 后台队列任务（pipeline/ip）不走请求上下文，按任务执行周期创建独立存储实例
+
+实现位置：`web_console/app.py` 中 `get_storage_manager_dep()` 与 `_new_storage_manager()`。
 
 ## 设计原则
 

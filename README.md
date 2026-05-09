@@ -13,7 +13,7 @@
 - **结构化输出**: JSON Schema 确保 LLM 输出可解析
 - **记忆系统**: 事件时间线 + 角色状态追踪
 - **人味化规则**: 禁用 AI 常见句式，提升文本自然度
-- **Web UI**: Flask 后端 + React 前端，展示小说清单和创作进展
+- **Web UI**: FastAPI 网关 + React 前端，展示小说清单和创作进展
 
 ---
 
@@ -48,16 +48,16 @@ npm install
 npm run build
 cd ..
 
-# 启动后端
-python backend/app.py
+# 启动统一 API 网关（FastAPI）
+uvicorn web_console.app:app --reload --port 8787
 
-# 访问 http://localhost:5089
+# 访问 http://127.0.0.1:8787
 ```
 
 开发模式：
 ```bash
-# 终端 1: 启动后端（自动重载）
-python backend/app.py
+# 终端 1: 启动 FastAPI 网关
+uvicorn web_console.app:app --reload --port 8787
 
 # 终端 2: 启动前端 dev server
 cd client
@@ -80,7 +80,7 @@ StoryForge 当前使用单一配置文件：`~/.storyforge/storyforge.yaml`。
 
 - 配置文件：`~/.storyforge/storyforge.yaml`
 - 加载入口：`core/config.py`
-- 适用范围：Flask backend、FastAPI web_console、核心 Pipeline
+- 适用范围：FastAPI 网关（web_console）、核心 Pipeline
 
 ```yaml
 llm:
@@ -97,7 +97,7 @@ storage:
 
 server:
     host: 0.0.0.0
-    port: 5089
+  port: 8787
     cors_origins: "*"
   debug: false
 
@@ -143,8 +143,8 @@ StoryForge/
 │   ├── outline/            # 大纲细化
 │   ├── extraction/         # 知识萃取
 │   └── ip_generation/      # IP 生成
-├── backend/                # Flask 后端 API
-│   └── app.py              # API 服务
+├── backend/                # 兼容层（已下线）
+│   └── app.py              # Deprecated: 返回 410 提示迁移到 FastAPI
 ├── client/                 # React 前端
 │   ├── src/
 │   │   ├── App.jsx

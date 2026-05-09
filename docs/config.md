@@ -7,7 +7,7 @@ StoryForge 使用单一 YAML 配置文件，所有运行配置都从该文件读
 ## 配置文件 (YAML)
 
 ### 用途
-- Flask API 服务
+- FastAPI API 网关服务（web_console）
 - 数据存储
 - Pipeline 配置
 
@@ -15,7 +15,7 @@ StoryForge 使用单一 YAML 配置文件，所有运行配置都从该文件读
 
 - 文件：`~/.storyforge/storyforge.yaml`
 - 加载入口：`core/config.py`
-- 适用范围：Flask API、FastAPI web_console、Pipeline、模型路由
+- 适用范围：FastAPI 网关（web_console）、Pipeline、模型路由
 
 ### 配置文件示例
 
@@ -34,7 +34,7 @@ storage:
 
 server:
     host: 0.0.0.0
-    port: 5089
+    port: 8787
     cors_origins: "*"
     debug: false
 
@@ -165,7 +165,7 @@ llm:
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
 | `server.host` | 监听地址 | `0.0.0.0` |
-| `server.port` | 端口 | `5089` |
+| `server.port` | 端口 | `8787` |
 | `server.cors_origins` | 允许跨域的源 | `"*"` |
 | `server.debug` | Flask debug 开关 | `false` |
 

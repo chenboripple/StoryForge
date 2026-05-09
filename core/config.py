@@ -43,7 +43,7 @@ class StorageConfig:
 @dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
-    port: int = 5089
+    port: int = 8787
     cors_origins: str = "*"
     debug: bool = False
 
