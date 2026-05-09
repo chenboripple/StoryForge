@@ -21,6 +21,22 @@ from .extraction import (
 )
 from .ip_assets import CharacterIP, RelationshipEdge, SceneSetting, DerivedSetting, StoryBible
 from .agent_comm import AgentMessage, RoutingSuggestion
+from .video_assets import (
+    ShotSpec,
+    VideoScript,
+    CharacterVisualProfile,
+    SceneCanonicalProfile,
+    VisualBible,
+    VideoAsset,
+    AssetManifest,
+    VideoRenderPlan,
+    ConsistencyIssue,
+    ConsistencyMetrics,
+    ConsistencyThresholds,
+    ConsistencyReport,
+    VideoOutput,
+    VideoState,
+)
 
 __all__ = [
     # Base
@@ -46,4 +62,9 @@ __all__ = [
     'CharacterIP', 'RelationshipEdge', 'SceneSetting', 'DerivedSetting', 'StoryBible',
     # Agent Communication
     'AgentMessage', 'RoutingSuggestion',
+    # Video
+    'ShotSpec', 'VideoScript', 'CharacterVisualProfile', 'SceneCanonicalProfile',
+    'VisualBible', 'VideoAsset', 'AssetManifest', 'VideoRenderPlan',
+    'ConsistencyIssue', 'ConsistencyMetrics', 'ConsistencyThresholds',
+    'ConsistencyReport', 'VideoOutput', 'VideoState',
 ]

@@ -16,6 +16,9 @@ from core.models import (
     Chapter, Review, Proofread,
     ChapterAnalysis, StoryBible,
     AgentMessage, RoutingSuggestion,
+    VideoState, VideoScript, VisualBible,
+    AssetManifest, VideoRenderPlan,
+    ConsistencyReport, VideoOutput,
 )
 
 from .base import StorageConfig, ModelStorage, DictModelStorage, ListModelStorage
@@ -44,6 +47,13 @@ class StorageManager:
         'story_bible': 'story_bible.json',
         'agent_messages': 'agent_messages.json',
         'routing_suggestions': 'routing_suggestions.json',
+        'video_state': 'video_state.json',
+        'video_script': 'video_script.json',
+        'visual_bible': 'visual_bible.json',
+        'video_manifest': 'video_manifest.json',
+        'video_render_plan': 'video_render_plan.json',
+        'video_consistency_report': 'video_consistency_report.json',
+        'video_output': 'video_output.json',
     }
 
     def __init__(self, config: Optional[StorageConfig] = None):
@@ -65,6 +75,13 @@ class StorageManager:
         self._story_bible_store = ModelStorage(config, StoryBible, self.FILENAMES['story_bible'])
         self._messages_store = ListModelStorage(config, AgentMessage, self.FILENAMES['agent_messages'])
         self._routing_store = ListModelStorage(config, RoutingSuggestion, self.FILENAMES['routing_suggestions'])
+        self._video_state_store = ModelStorage(config, VideoState, self.FILENAMES['video_state'])
+        self._video_script_store = ModelStorage(config, VideoScript, self.FILENAMES['video_script'])
+        self._visual_bible_store = ModelStorage(config, VisualBible, self.FILENAMES['visual_bible'])
+        self._video_manifest_store = ModelStorage(config, AssetManifest, self.FILENAMES['video_manifest'])
+        self._video_render_plan_store = ModelStorage(config, VideoRenderPlan, self.FILENAMES['video_render_plan'])
+        self._video_consistency_report_store = ModelStorage(config, ConsistencyReport, self.FILENAMES['video_consistency_report'])
+        self._video_output_store = ModelStorage(config, VideoOutput, self.FILENAMES['video_output'])
 
         # 内存缓存
         self._cache: Dict[str, Dict[str, Any]] = {}  # novel_id -> {model_key: data}
@@ -384,6 +401,113 @@ class StorageManager:
         suggestions = self._routing_store.load_list(novel_id)
         self._cache_set(novel_id, 'routing_suggestions', suggestions)
         return suggestions
+
+    # ========== Video (视频生成) ==========
+
+    def save_video_state(self, novel_id: str, video_state: VideoState):
+        """保存视频状态"""
+        self._video_state_store.save(novel_id, video_state)
+        self._cache_set(novel_id, 'video_state', video_state)
+
+    def load_video_state(self, novel_id: str) -> Optional[VideoState]:
+        """加载视频状态"""
+        cached = self._cache_get(novel_id, 'video_state')
+        if cached:
+            return cached
+        video_state = self._video_state_store.load(novel_id)
+        if video_state:
+            self._cache_set(novel_id, 'video_state', video_state)
+        return video_state
+
+    def save_video_script(self, novel_id: str, script: VideoScript):
+        """保存视频剧本"""
+        self._video_script_store.save(novel_id, script)
+        self._cache_set(novel_id, 'video_script', script)
+
+    def load_video_script(self, novel_id: str) -> Optional[VideoScript]:
+        """加载视频剧本"""
+        cached = self._cache_get(novel_id, 'video_script')
+        if cached:
+            return cached
+        script = self._video_script_store.load(novel_id)
+        if script:
+            self._cache_set(novel_id, 'video_script', script)
+        return script
+
+    def save_visual_bible(self, novel_id: str, bible: VisualBible):
+        """保存视觉圣经"""
+        self._visual_bible_store.save(novel_id, bible)
+        self._cache_set(novel_id, 'visual_bible', bible)
+
+    def load_visual_bible(self, novel_id: str) -> Optional[VisualBible]:
+        """加载视觉圣经"""
+        cached = self._cache_get(novel_id, 'visual_bible')
+        if cached:
+            return cached
+        bible = self._visual_bible_store.load(novel_id)
+        if bible:
+            self._cache_set(novel_id, 'visual_bible', bible)
+        return bible
+
+    def save_video_manifest(self, novel_id: str, manifest: AssetManifest):
+        """保存视频资产索引"""
+        self._video_manifest_store.save(novel_id, manifest)
+        self._cache_set(novel_id, 'video_manifest', manifest)
+
+    def load_video_manifest(self, novel_id: str) -> Optional[AssetManifest]:
+        """加载视频资产索引"""
+        cached = self._cache_get(novel_id, 'video_manifest')
+        if cached:
+            return cached
+        manifest = self._video_manifest_store.load(novel_id)
+        if manifest:
+            self._cache_set(novel_id, 'video_manifest', manifest)
+        return manifest
+
+    def save_video_render_plan(self, novel_id: str, plan: VideoRenderPlan):
+        """保存视频渲染计划"""
+        self._video_render_plan_store.save(novel_id, plan)
+        self._cache_set(novel_id, 'video_render_plan', plan)
+
+    def load_video_render_plan(self, novel_id: str) -> Optional[VideoRenderPlan]:
+        """加载视频渲染计划"""
+        cached = self._cache_get(novel_id, 'video_render_plan')
+        if cached:
+            return cached
+        plan = self._video_render_plan_store.load(novel_id)
+        if plan:
+            self._cache_set(novel_id, 'video_render_plan', plan)
+        return plan
+
+    def save_video_consistency_report(self, novel_id: str, report: ConsistencyReport):
+        """保存一致性报告"""
+        self._video_consistency_report_store.save(novel_id, report)
+        self._cache_set(novel_id, 'video_consistency_report', report)
+
+    def load_video_consistency_report(self, novel_id: str) -> Optional[ConsistencyReport]:
+        """加载一致性报告"""
+        cached = self._cache_get(novel_id, 'video_consistency_report')
+        if cached:
+            return cached
+        report = self._video_consistency_report_store.load(novel_id)
+        if report:
+            self._cache_set(novel_id, 'video_consistency_report', report)
+        return report
+
+    def save_video_output(self, novel_id: str, output: VideoOutput):
+        """保存视频输出"""
+        self._video_output_store.save(novel_id, output)
+        self._cache_set(novel_id, 'video_output', output)
+
+    def load_video_output(self, novel_id: str) -> Optional[VideoOutput]:
+        """加载视频输出"""
+        cached = self._cache_get(novel_id, 'video_output')
+        if cached:
+            return cached
+        output = self._video_output_store.load(novel_id)
+        if output:
+            self._cache_set(novel_id, 'video_output', output)
+        return output
 
 
     # ========== Bulk Operations ==========

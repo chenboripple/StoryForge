@@ -23,6 +23,11 @@ from pydantic import BaseModel, Field
 
 from core.config import get_config
 from core.storage import get_storage_manager
+from core.models.video_assets import VideoState
+from stages.video_script.video_script_generator import VideoScriptGenerator
+from stages.video_bible.visual_bible_builder import VisualBibleBuilder
+from stages.video_assets.video_asset_generator import VideoAssetGenerator
+from core.video import StubImageProvider, StubEmbeddingProvider, VideoConsistencyService
 
 _cfg = get_config()
 _sm = get_storage_manager()
@@ -76,6 +81,19 @@ class GenerateIpRequest(BaseModel):
     novel_id: str
     character_ids: List[str] = Field(default_factory=list)
     force_regenerate: bool = False
+
+
+class GenerateVideoScriptRequest(BaseModel):
+    project_dir: str
+    novel_id: str
+
+
+class CheckVideoConsistencyRequest(BaseModel):
+    project_dir: str
+    novel_id: str
+    face_consistency_min: float = Field(default=0.82, ge=0.0, le=1.0)
+    age_transition_min: float = Field(default=0.58, ge=0.0, le=1.0)
+    scene_structure_min: float = Field(default=0.76, ge=0.0, le=1.0)
 
 
 @dataclass
@@ -670,6 +688,76 @@ def _run_ip_task(task_id: str) -> None:
             _save_runtime_state_unlocked()
 
 
+def _generate_video_script_assets(project_dir: str, novel_id: str) -> dict:
+    _ = project_dir
+    meta = _sm.load_novel_meta(novel_id)
+    if not meta:
+        raise RuntimeError(f"未找到小说: {novel_id}")
+
+    chapters = _sm.load_chapters(novel_id)
+    if not chapters:
+        raise RuntimeError(f"小说无章节内容: {novel_id}")
+
+    chars = _sm.load_characters(novel_id)
+
+    script_generator = VideoScriptGenerator()
+    bible_builder = VisualBibleBuilder()
+    asset_generator = VideoAssetGenerator(image_provider=StubImageProvider())
+
+    script = script_generator.generate(
+        novel_id=novel_id,
+        title=meta.novel_title or novel_id,
+        chapters=chapters,
+    )
+    bible = bible_builder.build(novel_id, script, chars)
+    manifest = asset_generator.generate(novel_id, script, bible)
+
+    _sm.save_video_script(novel_id, script)
+    _sm.save_visual_bible(novel_id, bible)
+    _sm.save_video_manifest(novel_id, manifest)
+
+    state = _sm.load_video_state(novel_id) or VideoState(novel_id=novel_id)
+    state.script = script
+    state.visual_bible = bible
+    state.manifest = manifest
+    state.status = "asseted"
+    state.error_message = ""
+    _sm.save_video_state(novel_id, state)
+
+    return {
+        "novel_id": novel_id,
+        "shot_count": len(script.shots),
+        "character_profile_count": len(bible.character_profiles),
+        "scene_profile_count": len(bible.scene_profiles),
+        "asset_count": len(manifest.assets),
+    }
+
+
+def _check_video_consistency(project_dir: str, novel_id: str, thresholds: dict) -> dict:
+    _ = project_dir
+    bible = _sm.load_visual_bible(novel_id)
+    manifest = _sm.load_video_manifest(novel_id)
+    if not bible or not manifest:
+        raise RuntimeError("缺少视觉圣经或资产索引，请先生成视频剧本与资产")
+
+    service = VideoConsistencyService(embedding_provider=StubEmbeddingProvider())
+    report = service.validate(
+        novel_id=novel_id,
+        bible=bible,
+        manifest=manifest,
+        threshold_overrides=thresholds,
+    )
+    _sm.save_video_consistency_report(novel_id, report)
+
+    state = _sm.load_video_state(novel_id) or VideoState(novel_id=novel_id)
+    state.consistency_report = report
+    state.status = "asseted" if report.passed else "failed"
+    state.error_message = "\n".join(report.fallback_reasons) if report.fallback_reasons else ""
+    _sm.save_video_state(novel_id, state)
+
+    return report.to_dict()
+
+
 def _run_task(task_id: str) -> None:
     with TASK_LOCK:
         task = TASKS[task_id]
@@ -798,6 +886,31 @@ async def index() -> str:
       <pre id="ip_result"></pre>
       <div id="ip_tasks"></div>
     </div>
+
+        <div class="card">
+            <h3>视频剧本与一致性检查（骨架）</h3>
+            <div class="row">
+                <label>目标小说</label><br />
+                <select id="video_novel_select"></select>
+            </div>
+            <div class="row">
+                <label>阈值：人脸一致性 (0-1)</label><br />
+                <input id="th_face" type="number" step="0.01" min="0" max="1" value="0.82" />
+            </div>
+            <div class="row">
+                <label>阈值：年龄迁移 (0-1)</label><br />
+                <input id="th_age" type="number" step="0.01" min="0" max="1" value="0.58" />
+            </div>
+            <div class="row">
+                <label>阈值：场景结构相似度 (0-1)</label><br />
+                <input id="th_scene" type="number" step="0.01" min="0" max="1" value="0.76" />
+            </div>
+            <div>
+                <button onclick="generateVideoScript()">生成剧本与资产骨架</button>
+                <button onclick="checkVideoConsistency()">执行一致性检查</button>
+            </div>
+            <pre id="video_result"></pre>
+        </div>
   </div>
 
 <script>
@@ -921,15 +1034,19 @@ async function loadNovels() {{
   const project_dir = document.getElementById('project_dir').value;
   const res = await fetch(`/api/novels?project_dir=${{encodeURIComponent(project_dir)}}`);
   const sel = document.getElementById('novel_select');
+    const videoSel = document.getElementById('video_novel_select');
   sel.innerHTML = '';
+    videoSel.innerHTML = '';
   if (!res.ok) {{
     sel.innerHTML = '<option value="">(加载失败)</option>';
+        videoSel.innerHTML = '<option value="">(加载失败)</option>';
     return;
   }}
   const data = await res.json();
   if (!data.novels.length) {{
     sel.innerHTML = '<option value="">(未发现小说快照，请先运行生成)</option>';
     document.getElementById('character_select').innerHTML = '';
+        videoSel.innerHTML = '<option value="">(未发现小说)</option>';
     return;
   }}
   for (const n of data.novels) {{
@@ -937,6 +1054,11 @@ async function loadNovels() {{
     opt.value = n.novel_id;
     opt.text = `${{n.novel_title}} [${{n.novel_id}}]`;
     sel.appendChild(opt);
+
+        const vopt = document.createElement('option');
+        vopt.value = n.novel_id;
+        vopt.text = `${{n.novel_title}} [${{n.novel_id}}]`;
+        videoSel.appendChild(vopt);
   }}
   await loadCharacters();
 }}
@@ -1001,6 +1123,60 @@ async function loadIpTasks() {{
     d.innerText = `${{t.task_id}} | ${{t.status}} | novel=${{t.novel_id}} | characters=${{(t.character_ids || []).join(',')}}`;
     wrap.appendChild(d);
   }}
+}}
+
+async function generateVideoScript() {{
+    const project_dir = document.getElementById('project_dir').value;
+    const novel_id = document.getElementById('video_novel_select').value;
+    if (!novel_id) {{
+        alert('请先选择小说');
+        return;
+    }}
+
+    const res = await fetch('/api/video/script/generate', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{ project_dir, novel_id }})
+    }});
+    if (!res.ok) {{
+        alert(await res.text());
+        return;
+    }}
+
+    const data = await res.json();
+    document.getElementById('video_result').textContent = JSON.stringify(data, null, 2);
+}}
+
+async function checkVideoConsistency() {{
+    const project_dir = document.getElementById('project_dir').value;
+    const novel_id = document.getElementById('video_novel_select').value;
+    if (!novel_id) {{
+        alert('请先选择小说');
+        return;
+    }}
+
+    const face_consistency_min = Number(document.getElementById('th_face').value || 0.82);
+    const age_transition_min = Number(document.getElementById('th_age').value || 0.58);
+    const scene_structure_min = Number(document.getElementById('th_scene').value || 0.76);
+
+    const res = await fetch('/api/video/consistency/check', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{
+            project_dir,
+            novel_id,
+            face_consistency_min,
+            age_transition_min,
+            scene_structure_min
+        }})
+    }});
+    if (!res.ok) {{
+        alert(await res.text());
+        return;
+    }}
+
+    const data = await res.json();
+    document.getElementById('video_result').textContent = JSON.stringify(data, null, 2);
 }}
 
 setInterval(async () => {{
@@ -1109,6 +1285,58 @@ async def generate_ip(req: GenerateIpRequest) -> dict:
     queue_position = _enqueue_task(QueueTask(task_id=task_id, task_type="ip"))
 
     return {"ok": True, "task": _ip_task_to_dict(task), "queue_position": queue_position}
+
+
+@app.post("/api/video/script/generate")
+async def generate_video_script(req: GenerateVideoScriptRequest) -> dict:
+    project_dir = _resolve_project_dir(req.project_dir)
+    if not os.path.isdir(project_dir):
+        raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
+
+    novel_id = req.novel_id.strip()
+    if not novel_id:
+        raise HTTPException(status_code=400, detail="novel_id 不能为空")
+
+    try:
+        result = _generate_video_script_assets(project_dir, novel_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {"ok": True, "result": result}
+
+
+@app.post("/api/video/consistency/check")
+async def check_video_consistency(req: CheckVideoConsistencyRequest) -> dict:
+    project_dir = _resolve_project_dir(req.project_dir)
+    if not os.path.isdir(project_dir):
+        raise HTTPException(status_code=400, detail=f"目录不存在: {project_dir}")
+
+    novel_id = req.novel_id.strip()
+    if not novel_id:
+        raise HTTPException(status_code=400, detail="novel_id 不能为空")
+
+    try:
+        report = _check_video_consistency(
+            project_dir,
+            novel_id,
+            thresholds={
+                "face_consistency_min": req.face_consistency_min,
+                "age_transition_min": req.age_transition_min,
+                "scene_structure_min": req.scene_structure_min,
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {"ok": True, "report": report}
+
+
+@app.get("/api/video/consistency/{novel_id}")
+async def get_video_consistency(novel_id: str) -> dict:
+    report = _sm.load_video_consistency_report(novel_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="未找到一致性报告")
+    return {"ok": True, "report": report.to_dict()}
 
 
 @app.get("/api/ip/tasks")
