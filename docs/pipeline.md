@@ -51,6 +51,20 @@ pipeline = NovelPipeline(
 | `knowledge_extractor` | `stages/extraction/KnowledgeExtractor` | 从章节提取知识 | `chapter_analyses`, `current_stage=extraction` |
 | `ip_designer` | `stages/ip_generation/IPGenerator` | 生成 IP 资产 | `story_bible`, `character_ips`, `current_stage=ip_generation` |
 
+## 视频生成节点（可选）
+
+在启用了视频生成功能时，Pipeline 会在 IP 生成阶段或作为单独流程插入视频节点，主要节点如下：
+
+| 节点 | 模块 | 职责 | 输出到 state |
+|------|------|------|--------------|
+| `video_script` | `stages/video_script/VideoScriptGenerator` | 从章节生成镜头级剧本（ShotSpec 列表） | `creation.video_script_id` |
+| `visual_bible` | `stages/video_bible/VisualBibleBuilder` | 构建人物视觉圣经与场景参考 | `creation.visual_bible_id` |
+| `video_assets` | `stages/video_assets/VideoAssetGenerator` | 为角色/场景生成参考图与镜头参考资产 | `creation.video_manifest_id` |
+| `video_consistency` | `core.video.consistency.VideoConsistencyService` | 对镜头、角色视觉与文本做量化一致性检查并记录回退原因 | `creation.video_consistency_report_id`, `video_fallback_reasons` |
+| `video_generate` | `stages/video_generation/VideoGenerator` | 调用 VideoProvider 生成镜头片段并汇总为渲染计划与输出 | `creation.video_output_id`, `video_render_plan_id` |
+
+路由逻辑：`video_consistency` 节点可触发自动回退（例如重新生成资产或降低阈值），并将回退原因写入 `NovelState.video_fallback_reasons`。
+
 ## 路由逻辑
 
 ### 审稿路由（`_review_router`）

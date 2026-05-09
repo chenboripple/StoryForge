@@ -23,12 +23,14 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  - local_store/vector_store.jsonl  (向量库)                         │
 │  - local_store/ip_assets/  (IP 资产)                                │
 │  - debug_output/  (调试输出)                                        │
+│  - video_assets/  (视频生成中间产物：剧本、视觉圣经、渲染计划、检查报告) │
 ├─────────────────────────────────────────────────────────────────────┤
 │                       Pipeline 层 (LangGraph)                         │
 ┌─────────────────────────────────────────────────────────────────────┐
 │  创作阶段：outline_refiner → writer → reviewer → reviser → proofread │
 │  萃取阶段：knowledge_extractor  (从章节提取知识 → memory)            │
 │  IP 阶段：ip_designer  (生成 story bible + 人物 IP)                  │
+│  视频阶段（可选）：video_script → visual_bible → video_assets → video_consistency → video_generate │
 │  支持：checkpoint 断点续跑、条件路由、AI 味检测                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Agent 层                                      │

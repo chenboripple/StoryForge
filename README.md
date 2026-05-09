@@ -205,6 +205,16 @@ StoryForge/
 - 终审不通过 → 返回修改
 - 审稿通过 → 进入校对
 
+### 7. 视频生成（实验性）
+
+- 支持从小说内容自动生成视频相关资产：镜头剧本（VideoScript）、视觉圣经（VisualBible）、镜头级视觉资产与渲染计划
+- 流程（Pipeline 节点）：`video_script` → `visual_bible` → `video_assets` → `video_consistency` → `video_generate`
+- 控制台 API（web_console）支持手动触发：`POST /api/video/script/generate`、`POST /api/video/consistency/check`、`GET /api/video/consistency/{novel_id}`
+- 存储：视频相关的中间产物与报告由 `StorageManager` 统一持久化（`video_script`, `visual_bible`, `video_render_plan`, `video_output`, `video_consistency_report`）
+- Provider 抽象：Image / Video / Embedding Provider 为抽象接口，仓库内含占位实现（stub），可以在 `~/.storyforge/storyforge.yaml` 中配置真实供应商
+
+> 注意：视频生成功能目前为首阶段实现（骨架 + 可量化一致性检查），实际生成需要接入具体的 Image/Video/Embedding 服务并调优阈值。
+
 ---
 
 ## 调试

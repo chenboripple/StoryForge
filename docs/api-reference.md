@@ -636,10 +636,15 @@ class IPGenerator:
 ├── index.json            # 小说清单索引
 └── novels/
     └── {novel_id}/       # 单本小说目录
-        ├── novel_meta.json
-        ├── chapters.json
-        ├── reviews.json
-        └── ...
+    ├── novel_meta.json
+    ├── chapters.json
+    ├── reviews.json
+    ├── video_script.json                # 镜头剧本
+    ├── visual_bible.json                # 视觉圣经 / 人物视觉档
+    ├── video_render_plan.json           # 渲染计划
+    ├── video_output.json                # 最终输出元数据
+    ├── video_consistency_report.json    # 一致性检查报告
+    └── ...
 ```
 
 **函数**：
@@ -797,3 +802,42 @@ FastAPI 操作界面，默认端口 8787。
 ```bash
 uvicorn web_console.app:app --reload --port 8787
 ```
+
+### Video API
+
+web_console 提供视频生成功能的操作接口（实验性）：
+
+- `POST /api/video/script/generate`：根据指定小说生成镜头剧本与视觉圣经草稿。
+    - 请求示例：
+        ```json
+        {
+            "novel_id": "demo_001",
+            "chapter": 1,
+            "include_assets": true
+        }
+        ```
+    - 返回：任务接受结果（含生成的 `video_script_id` / `visual_bible_id` 引用，或错误信息）。
+
+- `POST /api/video/consistency/check`：对已有剧本/视觉圣经/镜头资产运行量化一致性检查，返回 `ConsistencyReport`。
+    - 请求示例：
+        ```json
+        {
+            "novel_id": "demo_001",
+            "script_id": "...",
+            "thresholds": {"face_consistency": 0.85}
+        }
+        ```
+    - 返回：`ConsistencyReport`（包含 `metrics`, `issues`, `fallback_reasons`，以及是否触发自动回退）。
+
+- `GET /api/video/consistency/{novel_id}`：查询指定小说最近一次一致性检查报告（若有）。
+
+数据模型摘要（core/models/video_assets.py）:
+
+- `VideoScript`：镜头序列与元数据
+- `VisualBible`：人物视觉简介与场景参考
+- `VideoRenderPlan`：镜头渲染计划与片段列表
+- `VideoOutput`：最终视频输出元数据（文件引用）
+- `ConsistencyReport`：一致性指标、阈值与回退原因
+
+存储位置：由 `config.storage.data_dir` 决定，视频产物以 `video_*` 文件名由 `StorageManager` 管理（例如 `video_script.json`, `visual_bible.json`, `video_consistency_report.json`）。
+

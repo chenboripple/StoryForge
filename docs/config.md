@@ -51,6 +51,26 @@ debug:
     output_dir: "debug_output"
 ```
 
+### 视频提供商配置（可选）
+
+如果启用了视频/图像/向量服务，建议在配置文件中添加 `video` 小节来指定 provider、api_key 与相关参数。示例：
+
+```yaml
+video:
+    image_provider: mock        # image provider 名称（mock / stability / openai_images / ...）
+    video_provider: mock        # video provider 名称（mock / vendor_x / ...）
+    embedding_provider: mock    # 向量嵌入提供商（mock / openai / sentence-transformers）
+    api_keys:
+        image: ""
+        video: ""
+        embedding: ""
+    extra: {}
+```
+
+说明：
+- `image_provider` / `video_provider` / `embedding_provider` 对应仓库中 `core.video.providers` 定义的抽象接口。当前仓库包含占位（stub）实现；接入真实服务需要在此处填写 provider 名称与密钥，并在运行时由 `llm_factory` / provider 工厂选择具体实现。
+- 配置文件仍位于 `~/.storyforge/storyforge.yaml`，并且不应提交到 Git（请把密钥保存在配置文件中，配置文件不会被仓库追踪）。
+
 **注意**：配置文件放在用户主目录，不会被任何 Git 仓库追踪，可安全填写 API 密钥。
 
 完整配置示例与更多说明见 [docs/config-example.md](config-example.md)。
