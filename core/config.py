@@ -1,11 +1,8 @@
 """
 StoryForge - 配置加载
 
-配置文件位置（按优先级）：
-  1. $STORYFORGE_CONFIG 指定的路径
-  2. ~/.storyforge/storyforge.yaml               （用户级，推荐）
-  3. <project_root>/.storyforge/storyforge.yaml  （项目级）
-  4. 内置默认值
+配置文件位置：
+    ~/.storyforge/storyforge.yaml
 
 配置项包括：大模型、存储位置、服务器端口、Pipeline 行为等。
 不依赖系统环境变量。
@@ -22,8 +19,7 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None
 
-
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".storyforge", "storyforge.yaml")
 
 
 # ==================== 数据结构 ====================
@@ -47,8 +43,9 @@ class StorageConfig:
 @dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
-    port: int = 5089
+    port: int = 8787
     cors_origins: str = "*"
+    debug: bool = False
 
 
 @dataclass
@@ -117,13 +114,7 @@ class StoryForgeConfig:
 # ==================== 加载逻辑 ====================
 
 def _candidate_paths() -> list[str]:
-    paths = []
-    env_path = os.environ.get("STORYFORGE_CONFIG")
-    if env_path:
-        paths.append(env_path)
-    paths.append(os.path.join(os.path.expanduser("~"), ".storyforge", "storyforge.yaml"))
-    paths.append(os.path.join(_PROJECT_ROOT, ".storyforge", "storyforge.yaml"))
-    return paths
+    return [_DEFAULT_CONFIG_PATH]
 
 
 def _resolve_config_path() -> Optional[str]:
@@ -147,11 +138,11 @@ def load_config(path: Optional[str] = None) -> StoryForgeConfig:
     加载配置。如果文件不存在或解析失败，返回默认配置（不抛异常）。
 
     Args:
-        path: 显式指定的配置文件路径。如果为 None，按候选路径查找。
+        path: 兼容参数，未使用。配置始终从 ~/.storyforge/storyforge.yaml 读取。
     """
     cfg = StoryForgeConfig()
 
-    target_path = path or _resolve_config_path()
+    target_path = _resolve_config_path()
     if not target_path:
         return cfg
 

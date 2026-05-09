@@ -119,6 +119,18 @@ class NovelState:
     visual_assets: Dict[str, List[Dict]] = field(default_factory=dict)
     story_bible: Optional[Any] = None  # Story Bible 对象
 
+    # 视频层（桥接字段：详细内容保存在 VideoState）
+    video_enabled: bool = False
+    video_state_status: str = "pending"
+    video_script_id: str = ""
+    visual_bible_id: str = ""
+    video_manifest_id: str = ""
+    video_render_plan_id: str = ""
+    video_output_id: str = ""
+    video_retry_count: int = 0
+    video_max_retries: int = 1
+    video_fallback_reasons: List[str] = field(default_factory=list)
+
     # 兼容容器（仅用于存储非章节类辅助数据，不再与 chapters 双向绑定）
     creation: Dict[str, Any] = field(default_factory=dict)
 
@@ -130,6 +142,7 @@ class NovelState:
     error_message: str = ""
     human_feedback: Optional[str] = None
     should_pause: bool = False
+    last_node: str = ""
 
     def __post_init__(self):
         # 兼容旧数据：如果 creation 中有 chapters 且 self.chapters 为空，迁移一次

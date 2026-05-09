@@ -13,7 +13,7 @@
 - **结构化输出**: JSON Schema 确保 LLM 输出可解析
 - **记忆系统**: 事件时间线 + 角色状态追踪
 - **人味化规则**: 禁用 AI 常见句式，提升文本自然度
-- **Web UI**: Flask 后端 + React 前端，展示小说清单和创作进展
+- **Web UI**: FastAPI 网关 + React 前端，展示小说清单和创作进展
 
 ---
 
@@ -48,16 +48,16 @@ npm install
 npm run build
 cd ..
 
-# 启动后端
-python backend/app.py
+# 启动统一 API 网关（FastAPI）
+uvicorn web_console.app:app --reload --port 8787
 
-# 访问 http://localhost:5089
+# 访问 http://127.0.0.1:8787
 ```
 
 开发模式：
 ```bash
-# 终端 1: 启动后端（自动重载）
-python backend/app.py
+# 终端 1: 启动 FastAPI 网关
+uvicorn web_console.app:app --reload --port 8787
 
 # 终端 2: 启动前端 dev server
 cd client
@@ -76,39 +76,11 @@ uvicorn web_console.app:app --reload --port 8787
 
 ## 配置
 
-StoryForge 使用两套配置系统（历史原因，两者共存）。完整说明见 [docs/config.md](docs/config.md)。
+StoryForge 当前使用单一配置文件：`~/.storyforge/storyforge.yaml`。
 
-### 配置系统一：web_console (JSON)
-
-用于 FastAPI 操作界面。
-
-- 文件：`~/.storyforge/config.json`
-- 加载入口：`core/settings.py`
-- 优先级：环境变量 > 配置文件
-
-```json
-{
-  "console": {
-    "max_running_tasks": 2,
-    "default_command": "python examples/debug_pipeline.py",
-    "template_file": "~/work/StoryForge/web_console/templates.json"
-  },
-  "debug": {
-    "output_dir": "~/work/StoryForge/debug_output"
-  },
-  "pipeline": {
-    "default_target_word_count": 3000
-  }
-}
-```
-
-### 配置系统二：backend (YAML)
-
-用于 Flask API 服务和核心 Pipeline。
-
-- 文件：`~/.storyforge/storyforge.yaml`（推荐）
+- 配置文件：`~/.storyforge/storyforge.yaml`
 - 加载入口：`core/config.py`
-- 优先级：`$STORYFORGE_CONFIG` > `~/.storyforge/storyforge.yaml` > 项目根目录配置 > 默认值
+- 适用范围：FastAPI 网关（web_console）、核心 Pipeline
 
 ```yaml
 llm:
@@ -125,25 +97,28 @@ storage:
 
 server:
     host: 0.0.0.0
-    port: 5089
+  port: 8787
     cors_origins: "*"
+  debug: false
 
 pipeline:
     max_review_rounds: 3
     default_target_word_count: 3000
+
+console:
+  max_running_tasks: 3
+  default_command: python examples/demo_pipeline.py
+  template_file: ~/.storyforge/templates.json
+
+debug:
+  output_dir: debug_output
 ```
 
 ### 诊断命令
 
 ```bash
-# 查看当前 YAML 配置（含来源）
+# 查看当前生效配置（含来源）
 python -m core.config
-
-# 查看当前 JSON 配置（含来源）
-python -m core.settings
-
-# 仅校验 JSON 配置（成功返回 0，失败非 0）
-python -m core.settings --check
 ```
 
 ---
@@ -158,8 +133,7 @@ StoryForge/
 │   ├── schema.py           # 结构化输出 Schema
 │   ├── memory.py           # 记忆系统
 │   ├── prompt_assembler.py # 动态 Prompt 组装
-│   ├── config.py           # YAML 配置（backend）
-│   ├── settings.py         # JSON 配置（web_console）
+│   ├── config.py           # YAML 配置（全系统）
 │   └── utils/              # 工具函数
 ├── agents/                 # Agent 角色定义
 │   └── creation_agents.py  # Writer / Reviewer / Reviser / Proofreader
@@ -169,9 +143,8 @@ StoryForge/
 │   ├── outline/            # 大纲细化
 │   ├── extraction/         # 知识萃取
 │   └── ip_generation/      # IP 生成
-├── backend/                # Flask 后端 API
-│   ├── app.py              # API 服务
-│   └── storage.py          # JSON 存储层
+├── backend/                # 兼容层（已下线）
+│   └── app.py              # Deprecated: 返回 410 提示迁移到 FastAPI
 ├── client/                 # React 前端
 │   ├── src/
 │   │   ├── App.jsx
@@ -231,6 +204,16 @@ StoryForge/
 - AI 味过高 → 自动重写
 - 终审不通过 → 返回修改
 - 审稿通过 → 进入校对
+
+### 7. 视频生成（实验性）
+
+- 支持从小说内容自动生成视频相关资产：镜头剧本（VideoScript）、视觉圣经（VisualBible）、镜头级视觉资产与渲染计划
+- 流程（Pipeline 节点）：`video_script` → `visual_bible` → `video_assets` → `video_consistency` → `video_generate`
+- 控制台 API（web_console）支持手动触发：`POST /api/video/script/generate`、`POST /api/video/consistency/check`、`GET /api/video/consistency/{novel_id}`
+- 存储：视频相关的中间产物与报告由 `StorageManager` 统一持久化（`video_script`, `visual_bible`, `video_render_plan`, `video_output`, `video_consistency_report`）
+- Provider 抽象：Image / Video / Embedding Provider 为抽象接口，仓库内含占位实现（stub），可以在 `~/.storyforge/storyforge.yaml` 中配置真实供应商
+
+> 注意：视频生成功能目前为首阶段实现（骨架 + 可量化一致性检查），实际生成需要接入具体的 Image/Video/Embedding 服务并调优阈值。
 
 ---
 

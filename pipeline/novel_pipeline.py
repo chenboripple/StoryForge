@@ -4,10 +4,13 @@ StoryForge - Pipeline
 """
 
 from langgraph.graph import StateGraph, END
-from typing import Dict, Callable, Any, Optional
+from typing import Dict, Callable, Any, Optional, List
 import json
 import os
 from collections import Counter
+
+# 引入旧状态的所有字段用于兼容
+from core.state import NovelState
 
 from core.models import (
     NovelMeta, PipelineStage, Chapter, ChapterStatus,
@@ -26,19 +29,20 @@ from agents.creation_agents import (
 from stages.extraction.knowledge_extractor import KnowledgeExtractor
 from stages.ip_generation.ip_generator import IPGenerator
 from stages.outline.outline_generator import OutlineGenerator
+from stages.video_script.video_script_generator import VideoScriptGenerator
+from stages.video_bible.visual_bible_builder import VisualBibleBuilder
+from stages.video_assets.video_asset_generator import VideoAssetGenerator
+from stages.video_generation.video_generator import VideoGenerator
+from core.video import (
+    StubImageProvider,
+    StubVideoProvider,
+    StubEmbeddingProvider,
+    VideoConsistencyService,
+)
+from core.models.video_assets import VideoState
 
-
-@dataclass
-class PipelineState:
-    """Pipeline 轻量运行时状态 - 不持久化，只用于节点间传递控制信息"""
-    novel_id: str = ""
-    current_chapter: int = 1
-    review_round: int = 0
-    max_review_rounds: int = 3
-    error_message: str = ""
-    human_feedback: Optional[str] = None
-    should_pause: bool = False
-    last_node: str = ""
+# 使用单一状态模型，避免 PipelineState 与 NovelState 漂移。
+PipelineState = NovelState
 
 
 class NovelPipeline:
@@ -63,6 +67,7 @@ class NovelPipeline:
         use_outline_refinement: bool = True,
         use_extraction: bool = True,
         use_ip_generation: bool = True,
+        use_video_generation: bool = False,
         use_message_bus: bool = True,
         use_agent_routing: bool = False,
         checkpoint_dir: Optional[str] = None,
@@ -73,6 +78,7 @@ class NovelPipeline:
         self.use_outline_refinement = use_outline_refinement
         self.use_extraction = use_extraction
         self.use_ip_generation = use_ip_generation
+        self.use_video_generation = use_video_generation
         self.use_message_bus = use_message_bus
         self.use_agent_routing = use_agent_routing
         self.checkpoint_dir = checkpoint_dir or ".checkpoints"
@@ -82,6 +88,11 @@ class NovelPipeline:
         self.outline_generator: Optional[OutlineGenerator] = None
         self.knowledge_extractor: Optional[KnowledgeExtractor] = None
         self.ip_generator: Optional[IPGenerator] = None
+        self.video_script_generator: Optional[VideoScriptGenerator] = None
+        self.visual_bible_builder: Optional[VisualBibleBuilder] = None
+        self.video_asset_generator: Optional[VideoAssetGenerator] = None
+        self.video_generator: Optional[VideoGenerator] = None
+        self.video_consistency_service: Optional[VideoConsistencyService] = None
         self.error_handler: Optional[ErrorHandler] = None
         self.message_bus: Optional[MessageBus] = None
         self.workflow = None
@@ -116,6 +127,18 @@ class NovelPipeline:
                 output_dir=self.ip_output_dir
             )
 
+        if self.use_video_generation:
+            image_provider = StubImageProvider()
+            video_provider = StubVideoProvider()
+            embedding_provider = StubEmbeddingProvider()
+            self.video_script_generator = VideoScriptGenerator()
+            self.visual_bible_builder = VisualBibleBuilder()
+            self.video_asset_generator = VideoAssetGenerator(image_provider=image_provider)
+            self.video_generator = VideoGenerator(video_provider=video_provider)
+            self.video_consistency_service = VideoConsistencyService(
+                embedding_provider=embedding_provider
+            )
+
     def _build(self):
         """构建 LangGraph 工作流"""
 
@@ -148,7 +171,7 @@ class NovelPipeline:
             message_bus=self.message_bus
         )
 
-        workflow = StateGraph(PipelineState)
+        workflow = StateGraph(NovelState)
 
         if self.use_outline_refinement:
             workflow.add_node("outline_refiner", self._outline_refiner)
@@ -159,6 +182,11 @@ class NovelPipeline:
         workflow.add_node("proofreader", self._wrap_agent_invoke(self._proofreader_agent, "proofreader"))
         workflow.add_node("knowledge_extractor", self._knowledge_extractor)
         workflow.add_node("ip_designer", self._ip_designer)
+        workflow.add_node("video_script", self._video_script)
+        workflow.add_node("visual_bible", self._visual_bible)
+        workflow.add_node("video_assets", self._video_assets)
+        workflow.add_node("video_consistency", self._video_consistency)
+        workflow.add_node("video_generate", self._video_generate)
 
         if self.use_outline_refinement:
             workflow.set_entry_point("outline_refiner")
@@ -191,13 +219,34 @@ class NovelPipeline:
         )
 
         workflow.add_edge("knowledge_extractor", "ip_designer")
-        workflow.add_edge("ip_designer", END)
+
+        workflow.add_conditional_edges(
+            "ip_designer",
+            self._post_ip_router,
+            {
+                "video": "video_script",
+                "end": END,
+            }
+        )
+
+        workflow.add_edge("video_script", "visual_bible")
+        workflow.add_edge("visual_bible", "video_assets")
+        workflow.add_edge("video_assets", "video_consistency")
+        workflow.add_conditional_edges(
+            "video_consistency",
+            self._video_consistency_router,
+            {
+                "retry_assets": "video_assets",
+                "render": "video_generate",
+            }
+        )
+        workflow.add_edge("video_generate", END)
 
         self.workflow = workflow.compile()
 
     def _wrap_agent_invoke(self, agent, node_name: str):
         """包装 Agent.invoke（当前 Agents 仍使用旧 NovelState，后续逐步迁移）"""
-        def invoke(state: PipelineState) -> PipelineState:
+        def invoke(state: NovelState) -> NovelState:
             agent.state = state
             agent._current_chapter = state.current_chapter
 
@@ -214,7 +263,7 @@ class NovelPipeline:
             return result
         return invoke
 
-    def _outline_refiner(self, state: PipelineState) -> PipelineState:
+    def _outline_refiner(self, state: NovelState) -> NovelState:
         """大纲细化阶段：生成章级细纲"""
         print(f"📝 大纲细化阶段：第{state.current_chapter}章")
 
@@ -258,7 +307,7 @@ class NovelPipeline:
 
         return state
 
-    def _review_router(self, state: PipelineState) -> str:
+    def _review_router(self, state: NovelState) -> str:
         """审稿路由"""
         if state.error_message:
             print(f"❌ 错误：{state.error_message}")
@@ -295,7 +344,7 @@ class NovelPipeline:
 
         return "revise"
 
-    def _proofread_router(self, state: PipelineState) -> str:
+    def _proofread_router(self, state: NovelState) -> str:
         """校对路由"""
         sm = get_storage_manager()
         proofreads = sm.load_proofreads(state.novel_id)
@@ -313,7 +362,7 @@ class NovelPipeline:
         print(f"📝 第{state.current_chapter}章校对发现问题，返回修改")
         return "fail"
 
-    def _knowledge_extractor(self, state: PipelineState) -> PipelineState:
+    def _knowledge_extractor(self, state: NovelState) -> NovelState:
         """知识萃取（阶段二）"""
         print(f"🔍 萃取第{state.current_chapter}章知识...")
 
@@ -348,7 +397,7 @@ class NovelPipeline:
         state.current_stage = PipelineStage.EXTRACTION
         return state
 
-    def _ip_designer(self, state: PipelineState) -> PipelineState:
+    def _ip_designer(self, state: NovelState) -> NovelState:
         """IP生成（阶段三）"""
         print(f"🎨 生成 IP 资产...")
 
@@ -378,7 +427,174 @@ class NovelPipeline:
         state.current_stage = PipelineStage.IP_GENERATION
         return state
 
-    def _save_checkpoint(self, state: PipelineState, node_name: str):
+    def _post_ip_router(self, state: NovelState) -> str:
+        """IP 阶段后路由：是否进入视频生成"""
+        if self.use_video_generation and state.video_enabled:
+            return "video"
+        return "end"
+
+    def _video_script(self, state: NovelState) -> NovelState:
+        """生成镜头级视频剧本"""
+        print("🎞️ 生成视频剧本...")
+        state.current_stage = PipelineStage.VIDEO_GENERATION
+
+        if not self.video_script_generator:
+            return state
+
+        sm = get_storage_manager()
+        chapters = sm.load_chapters(state.novel_id)
+        meta = sm.load_novel_meta(state.novel_id)
+
+        script = self.video_script_generator.generate(
+            novel_id=state.novel_id,
+            title=meta.novel_title if meta else state.novel_id,
+            chapters=chapters,
+        )
+        sm.save_video_script(state.novel_id, script)
+
+        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
+        video_state.script = script
+        video_state.status = "scripted"
+        sm.save_video_state(state.novel_id, video_state)
+
+        state.video_state_status = "scripted"
+        state.video_script_id = f"{state.novel_id}:video_script"
+        return state
+
+    def _visual_bible(self, state: NovelState) -> NovelState:
+        """生成视觉圣经（角色一致性/场景稳定规则）"""
+        print("🖼️ 构建视觉圣经...")
+
+        if not self.visual_bible_builder:
+            return state
+
+        sm = get_storage_manager()
+        script = sm.load_video_script(state.novel_id)
+        chars = sm.load_characters(state.novel_id)
+        if not script:
+            state.error_message = "缺少视频剧本，无法构建视觉圣经"
+            return state
+
+        bible = self.visual_bible_builder.build(state.novel_id, script, chars)
+        sm.save_visual_bible(state.novel_id, bible)
+
+        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
+        video_state.visual_bible = bible
+        video_state.status = "bibled"
+        sm.save_video_state(state.novel_id, video_state)
+
+        state.video_state_status = "bibled"
+        state.visual_bible_id = f"{state.novel_id}:visual_bible"
+        return state
+
+    def _video_assets(self, state: NovelState) -> NovelState:
+        """生成角色/场景/镜头参考资产"""
+        print("🎨 生成视频资产...")
+
+        if not self.video_asset_generator:
+            return state
+
+        sm = get_storage_manager()
+        script = sm.load_video_script(state.novel_id)
+        bible = sm.load_visual_bible(state.novel_id)
+        if not script or not bible:
+            state.error_message = "缺少视频剧本或视觉圣经，无法生成资产"
+            return state
+
+        manifest = self.video_asset_generator.generate(state.novel_id, script, bible)
+        sm.save_visual_bible(state.novel_id, bible)
+        sm.save_video_manifest(state.novel_id, manifest)
+
+        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
+        video_state.visual_bible = bible
+        video_state.manifest = manifest
+        video_state.status = "asseted"
+        sm.save_video_state(state.novel_id, video_state)
+
+        state.video_state_status = "asseted"
+        state.video_manifest_id = f"{state.novel_id}:video_manifest"
+        return state
+
+    def _video_consistency(self, state: NovelState) -> NovelState:
+        """一致性校验（规则 + embedding）"""
+        print("🧪 校验视频一致性...")
+
+        if not self.video_consistency_service:
+            return state
+
+        sm = get_storage_manager()
+        bible = sm.load_visual_bible(state.novel_id)
+        manifest = sm.load_video_manifest(state.novel_id)
+        if not bible or not manifest:
+            state.error_message = "缺少视觉圣经或资产索引，无法做一致性校验"
+            return state
+
+        report = self.video_consistency_service.validate(state.novel_id, bible, manifest)
+        sm.save_video_consistency_report(state.novel_id, report)
+
+        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
+        video_state.consistency_report = report
+        video_state.error_message = "\n".join(report.fallback_reasons) if report.fallback_reasons else ""
+        video_state.status = "asseted" if report.passed else "failed"
+        sm.save_video_state(state.novel_id, video_state)
+
+        return state
+
+    def _video_consistency_router(self, state: NovelState) -> str:
+        """一致性失败时自动回退到资产重建"""
+        sm = get_storage_manager()
+        report = sm.load_video_consistency_report(state.novel_id)
+        if report and not report.passed and state.video_retry_count < state.video_max_retries:
+            reasons = list(report.fallback_reasons or [])
+            state.video_fallback_reasons = reasons
+            if reasons:
+                state.error_message = " | ".join(reasons)
+            state.video_retry_count += 1
+            print(
+                f"♻️ 一致性未通过，回退重建资产（第{state.video_retry_count}次）"
+                f"，原因: {state.error_message or '指标低于阈值'}"
+            )
+            return "retry_assets"
+        if report and not report.passed:
+            state.video_fallback_reasons = list(report.fallback_reasons or [])
+            if state.video_fallback_reasons:
+                state.error_message = " | ".join(state.video_fallback_reasons)
+        return "render"
+
+    def _video_generate(self, state: NovelState) -> NovelState:
+        """生成最终视频"""
+        print("🎬 生成最终视频...")
+
+        if not self.video_generator:
+            state.current_stage = PipelineStage.COMPLETED
+            return state
+
+        sm = get_storage_manager()
+        script = sm.load_video_script(state.novel_id)
+        manifest = sm.load_video_manifest(state.novel_id)
+        if not script or not manifest:
+            state.error_message = "缺少剧本或资产索引，无法生成视频"
+            return state
+
+        plan = self.video_generator.build_render_plan(state.novel_id, script, manifest)
+        output = self.video_generator.generate(script, plan, manifest)
+
+        sm.save_video_render_plan(state.novel_id, plan)
+        sm.save_video_output(state.novel_id, output)
+
+        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
+        video_state.render_plan = plan
+        video_state.output = output
+        video_state.status = "rendered"
+        sm.save_video_state(state.novel_id, video_state)
+
+        state.video_state_status = "rendered"
+        state.video_render_plan_id = f"{state.novel_id}:video_render_plan"
+        state.video_output_id = f"{state.novel_id}:video_output"
+        state.current_stage = PipelineStage.COMPLETED
+        return state
+
+    def _save_checkpoint(self, state: NovelState, node_name: str):
         """保存检查点（只通过 StorageManager 保存，不写旧格式）"""
         sm = get_storage_manager()
         meta = sm.load_novel_meta(state.novel_id)
@@ -408,14 +624,14 @@ class NovelPipeline:
         except Exception as e:
             print(f"⚠️ 保存 pipeline 检查点失败: {e}")
 
-    def load_checkpoint(self, novel_id: str, chapter: int) -> Optional[PipelineState]:
+    def load_checkpoint(self, novel_id: str, chapter: int) -> Optional[NovelState]:
         """从 StorageManager 恢复状态"""
         sm = get_storage_manager()
         meta = sm.load_novel_meta(novel_id)
         if not meta:
             return None
 
-        state = PipelineState(
+        state = NovelState(
             novel_id=novel_id,
             current_chapter=chapter,
         )
@@ -436,7 +652,7 @@ class NovelPipeline:
 
         return state
 
-    def resume(self, novel_id: str, chapter: int, from_node: Optional[str] = None) -> PipelineState:
+    def resume(self, novel_id: str, chapter: int, from_node: Optional[str] = None) -> NovelState:
         """从检查点恢复并继续执行"""
         state = self.load_checkpoint(novel_id, chapter)
         if not state:
@@ -457,7 +673,12 @@ class NovelPipeline:
             "reviser": lambda s: self._reviser_agent.invoke(s) if self._reviser_agent else s,
             "proofreader": lambda s: self._proofreader_agent.invoke(s) if self._proofreader_agent else s,
             "knowledge_extractor": self._knowledge_extractor,
-            "ip_designer": self._ip_designer
+            "ip_designer": self._ip_designer,
+            "video_script": self._video_script,
+            "visual_bible": self._visual_bible,
+            "video_assets": self._video_assets,
+            "video_consistency": self._video_consistency,
+            "video_generate": self._video_generate,
         }
 
         if resume_node not in node_map:
@@ -490,7 +711,7 @@ class NovelPipeline:
 
         return sorted(checkpoints)
 
-    def run(self, initial_state: PipelineState) -> PipelineState:
+    def run(self, initial_state: NovelState) -> NovelState:
         """运行 Pipeline（只通过 StorageManager 持久化）"""
         print(f"🚀 启动 StoryForge Pipeline")
 
@@ -508,7 +729,16 @@ class NovelPipeline:
                     world_setting=None
                 )
 
-        result = self.workflow.invoke(initial_state)
+        result_data = self.workflow.invoke(initial_state)
+
+        # 将 LangGraph 返回的 dict 转换回 NovelState 对象
+        if isinstance(result_data, dict):
+            # 从字典安全构造，自动过滤不在 dataclass 中的字段
+            valid_fields = {f.name for f in NovelState.__dataclass_fields__.values()}
+            filtered = {k: v for k, v in result_data.items() if k in valid_fields}
+            result = NovelState(**filtered)
+        else:
+            result = result_data
 
         self._save_checkpoint(result, "completed")
 
@@ -516,12 +746,13 @@ class NovelPipeline:
 
         return result
 
-    def run_batch(self, state: PipelineState, chapters: list) -> Dict[int, PipelineState]:
+    def run_batch(self, state: NovelState, chapters: list) -> Dict[int, NovelState]:
         """批量创作多章"""
         results = {}
         for chapter_num in chapters:
-            state.current_chapter = chapter_num
-            results[chapter_num] = self.run(state)
+            chapter_state = state.copy()
+            chapter_state.current_chapter = chapter_num
+            results[chapter_num] = self.run(chapter_state)
         return results
 
     def visualize(self):

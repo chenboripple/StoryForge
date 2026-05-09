@@ -14,6 +14,7 @@ class PipelineStage(Enum):
     CREATION = "creation"
     EXTRACTION = "extraction"
     IP_GENERATION = "ip_generation"
+    VIDEO_GENERATION = "video_generation"
     COMPLETED = "completed"
 
 
@@ -56,6 +57,7 @@ class NovelMeta(BaseModel):
             PipelineStage.CREATION: "创作中",
             PipelineStage.EXTRACTION: "萃取中",
             PipelineStage.IP_GENERATION: "IP生成中",
+            PipelineStage.VIDEO_GENERATION: "视频生成中",
             PipelineStage.COMPLETED: "已完成",
         }
         return labels.get(self.current_stage, "未知")

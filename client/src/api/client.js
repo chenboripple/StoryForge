@@ -29,8 +29,8 @@ const STATUS_TONE = {
   pending: "gray",
 };
 
-async function request(path) {
-  const res = await fetch(path);
+async function request(path, options) {
+  const res = await fetch(path, options);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status} ${res.statusText}: ${text}`);
@@ -40,6 +40,12 @@ async function request(path) {
 
 export const api = {
   listNovels: () => request("/api/novels"),
+  createNovel: (data) =>
+    request("/api/novels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
   getNovel: (novelId) => request(`/api/novels/${encodeURIComponent(novelId)}`),
   listChapters: (novelId) =>
     request(`/api/novels/${encodeURIComponent(novelId)}/chapters`),

@@ -13,22 +13,24 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  - 创作进度监控                                                      │
 │  - 人物 IP 操作区                                                    │
 │  - 日志查看                                                          │
+│  - 统一 API 网关（原 backend API 已并入）                            │
 │                                                                      │
-│  backend/  (Flask, 端口 5089)                                        │
-│  - 小说清单/详情 API                                                 │
-│  - 静态文件服务                                                      │
+│  backend/  (Flask, 已下线)                                           │
+│  - 仅保留迁移提示（410 Gone）                                        │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         存储层                                       │
 │  - ~/.storyforge/data/  (小说数据, YAML 配置决定)                    │
 │  - local_store/vector_store.jsonl  (向量库)                         │
 │  - local_store/ip_assets/  (IP 资产)                                │
 │  - debug_output/  (调试输出)                                        │
+│  - video_assets/  (视频生成中间产物：剧本、视觉圣经、渲染计划、检查报告) │
 ├─────────────────────────────────────────────────────────────────────┤
 │                       Pipeline 层 (LangGraph)                         │
 ┌─────────────────────────────────────────────────────────────────────┐
 │  创作阶段：outline_refiner → writer → reviewer → reviser → proofread │
 │  萃取阶段：knowledge_extractor  (从章节提取知识 → memory)            │
 │  IP 阶段：ip_designer  (生成 story bible + 人物 IP)                  │
+│  视频阶段（可选）：video_script → visual_bible → video_assets → video_consistency → video_generate │
 │  支持：checkpoint 断点续跑、条件路由、AI 味检测                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Agent 层                                      │
@@ -43,8 +45,7 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  core/schema.py          ReviewResult, ProofreadResult, ChapterContent│
 │  core/memory.py          StoryMemory (事件/人物/世界状态)            │
 │  core/prompt_assembler.py  PromptAssembler (动态Prompt+人味化)       │
-│  core/settings.py        ~/.storyforge/config.json  (web_console用)  │
-│  core/config.py          ~/.storyforge/storyforge.yaml  (backend用)  │
+│  core/config.py          ~/.storyforge/storyforge.yaml  (全系统配置)  │
 ├─────────────────────────────────────────────────────────────────────┤
 │                       stages/ 模块                                   │
 │  stages/outline/         OutlineGenerator (章级细纲生成)            │
@@ -55,19 +56,21 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 
 ## 配置系统说明
 
-StoryForge 使用两套配置系统（历史原因，两者共存）：
+StoryForge 使用单一配置文件：
 
-### 1. web_console 配置 (JSON)
-- 文件位置：`~/.storyforge/config.json`
-- 加载入口：`core/settings.py`
-- 用途：FastAPI 操作界面、任务管理、IP 生成
-- 环境变量前缀：`STORYFORGE_*`
-
-### 2. backend 配置 (YAML)
 - 文件位置：`~/.storyforge/storyforge.yaml`
 - 加载入口：`core/config.py`
-- 用途：Flask API 服务、数据存储
-- 环境变量前缀：`STORYFORGE_CONFIG`
+- 用途：FastAPI API 网关、Pipeline 与存储路径
+
+## 依赖注入策略
+
+网关采用 **每请求 scoped DI**：
+
+- 每个 HTTP 请求通过 FastAPI `Depends` 创建独立 `StorageManager` 实例
+- 不在请求之间共享 `StorageManager` 内存缓存，降低跨请求状态污染风险
+- 后台队列任务（pipeline/ip）不走请求上下文，按任务执行周期创建独立存储实例
+
+实现位置：`web_console/app.py` 中 `get_storage_manager_dep()` 与 `_new_storage_manager()`。
 
 ## 设计原则
 

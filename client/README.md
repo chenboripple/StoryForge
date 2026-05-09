@@ -10,7 +10,7 @@ npm install
 npm start
 ```
 
-开发模式默认在 http://localhost:3000，并通过 `package.json` 中的 `proxy` 把 `/api/*` 请求转发到 Flask 后端 (http://localhost:5000)。
+开发模式默认在 http://localhost:3000，并通过 `package.json` 中的 `proxy` 把 `/api/*` 请求转发到 FastAPI 网关 (http://localhost:8787)。
 
 ## 构建
 
@@ -18,7 +18,7 @@ npm start
 npm run build
 ```
 
-构建产物输出到 `client/build/`，Flask (`backend/app.py`) 会自动作为静态资源服务它。
+构建产物输出到 `client/build/`。统一网关为 FastAPI (`web_console/app.py`)；`backend/app.py` 已下线，仅保留迁移提示。
 
 ## 文件结构
 

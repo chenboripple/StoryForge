@@ -1,78 +1,21 @@
 # 配置系统说明
 
-StoryForge 使用两套配置系统（历史原因，两者共存），请根据使用场景选择：
+StoryForge 使用单一 YAML 配置文件，所有运行配置都从该文件读取。
 
 ---
 
-## 配置系统一：web_console (JSON)
+## 配置文件 (YAML)
 
 ### 用途
-- FastAPI 操作界面
-- 任务管理
-- IP 生成
-- 调试输出
-
-### 配置文件位置
-
-- 文件：`~/.storyforge/config.json`
-- 加载入口：`core/settings.py`
-- 优先级：环境变量 > 配置文件
-
-### 环境变量
-
-| 环境变量 | 配置路径 |
-|----------|----------|
-| `STORYFORGE_MAX_RUNNING_TASKS` | `console.max_running_tasks` |
-| `STORYFORGE_DEFAULT_COMMAND` | `console.default_command` |
-| `STORYFORGE_TEMPLATE_FILE` | `console.template_file` |
-| `STORYFORGE_DEBUG_DIR` | `debug.output_dir` |
-| `STORYFORGE_DEFAULT_TARGET_WORD_COUNT` | `pipeline.default_target_word_count` |
-
-### 配置文件示例
-
-```json
-{
-    "console": {
-        "max_running_tasks": 2,
-        "default_command": "python examples/debug_pipeline.py",
-        "template_file": "~/work/StoryForge/web_console/templates.json"
-    },
-    "debug": {
-        "output_dir": "~/work/StoryForge/debug_output"
-    },
-    "pipeline": {
-        "default_target_word_count": 3000
-    }
-}
-```
-
-### 诊断命令
-
-```bash
-# 查看当前生效配置（含来源）
-python -m core.settings
-
-# 仅校验配置（成功返回 0，失败非 0）
-python -m core.settings --check
-```
-
----
-
-## 配置系统二：backend (YAML)
-
-### 用途
-- Flask API 服务
+- FastAPI API 网关服务（web_console）
 - 数据存储
 - Pipeline 配置
 
 ### 配置文件位置
 
-优先级从高到低：
-
-1. `$STORYFORGE_CONFIG` 环境变量指定的路径
-2. `~/.storyforge/storyforge.yaml`  ← **推荐位置**
-3. `<project_root>/.storyforge/storyforge.yaml`
-4. 内置默认值
+- 文件：`~/.storyforge/storyforge.yaml`
+- 加载入口：`core/config.py`
+- 适用范围：FastAPI 网关（web_console）、Pipeline、模型路由
 
 ### 配置文件示例
 
@@ -91,13 +34,42 @@ storage:
 
 server:
     host: 0.0.0.0
-    port: 5089
+    port: 8787
     cors_origins: "*"
+    debug: false
 
 pipeline:
     max_review_rounds: 3
     default_target_word_count: 3000
+
+console:
+    max_running_tasks: 3
+    default_command: "python examples/demo_pipeline.py"
+    template_file: "~/.storyforge/templates.json"
+
+debug:
+    output_dir: "debug_output"
 ```
+
+### 视频提供商配置（可选）
+
+如果启用了视频/图像/向量服务，建议在配置文件中添加 `video` 小节来指定 provider、api_key 与相关参数。示例：
+
+```yaml
+video:
+    image_provider: mock        # image provider 名称（mock / stability / openai_images / ...）
+    video_provider: mock        # video provider 名称（mock / vendor_x / ...）
+    embedding_provider: mock    # 向量嵌入提供商（mock / openai / sentence-transformers）
+    api_keys:
+        image: ""
+        video: ""
+        embedding: ""
+    extra: {}
+```
+
+说明：
+- `image_provider` / `video_provider` / `embedding_provider` 对应仓库中 `core.video.providers` 定义的抽象接口。当前仓库包含占位（stub）实现；接入真实服务需要在此处填写 provider 名称与密钥，并在运行时由 `llm_factory` / provider 工厂选择具体实现。
+- 配置文件仍位于 `~/.storyforge/storyforge.yaml`，并且不应提交到 Git（请把密钥保存在配置文件中，配置文件不会被仓库追踪）。
 
 **注意**：配置文件放在用户主目录，不会被任何 Git 仓库追踪，可安全填写 API 密钥。
 
@@ -193,10 +165,9 @@ llm:
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
 | `server.host` | 监听地址 | `0.0.0.0` |
-| `server.port` | 端口 | `5089` |
+| `server.port` | 端口 | `8787` |
 | `server.cors_origins` | 允许跨域的源 | `"*"` |
-
-**覆盖方式**：可通过环境变量 `$PORT` / `$HOST` 临时覆盖（注意：仅适用于 Flask backend）。
+| `server.debug` | Flask debug 开关 | `false` |
 
 ---
 
@@ -222,8 +193,9 @@ config = get_config()
 # 强制重新加载
 config = get_config(reload=True)
 
-# 显式指定路径
-config = load_config("/path/to/myconfig.yaml")
+# 注意：load_config(path) 的 path 参数目前仅保留兼容，不参与路径选择。
+# 实际总是从 ~/.storyforge/storyforge.yaml 加载。
+config = load_config()
 
 # 清空缓存（测试用）
 reset_config()
@@ -234,20 +206,9 @@ print(config.server.port)
 print(config.data_dir_abs)  # data_dir 的绝对路径
 ```
 
-### JSON 配置 (core.settings)
+### 诊断命令
 
-```python
-from core.settings import get_settings, get_settings_with_sources
-
-# 获取配置（带缓存）
-settings = get_settings()
-
-# 获取配置 + 来源信息
-settings, sources = get_settings_with_sources()
-print(sources)  # {"console.max_running_tasks": "file:..." , ...}
-
-# 访问配置
-print(settings.console.max_running_tasks)
-print(settings.debug.output_dir)
-print(settings.pipeline.default_target_word_count)
+```bash
+# 查看当前 YAML 配置（含来源）
+python -m core.config
 ```

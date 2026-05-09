@@ -2,8 +2,10 @@
   "name": "storyforge-client",
   "version": "0.1.0",
   "private": true,
-  "proxy": "http://localhost:5089",
+  "proxy": "http://localhost:8787",
   "dependencies": {
+    "@ant-design/icons": "^6.2.2",
+    "antd": "^6.3.7",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.22.0",

@@ -434,7 +434,7 @@ class StorageConfig:
 @dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
-    port: int = 5089
+    port: int = 8787
     cors_origins: str = "*"
 
 @dataclass
@@ -459,35 +459,33 @@ def get_config(reload: bool = False) -> StoryForgeConfig
 def reset_config() -> None
 ```
 
-### `core/settings.py` (JSON 配置 - web_console 用)
+### `core/config.py`（统一 YAML 配置）
+
+配置文件固定位置：`~/.storyforge/storyforge.yaml`
 
 ```python
-@dataclass(frozen=True)
-class ConsoleSettings:
-    max_running_tasks: int
-    default_command: str
-    template_file: Path
+@dataclass
+class ConsoleConfig:
+    max_running_tasks: int = 3
+    default_command: str = "python examples/demo_pipeline.py"
+    template_file: str = "~/.storyforge/templates.json"
 
-@dataclass(frozen=True)
-class DebugSettings:
-    output_dir: Path
+@dataclass
+class DebugConfig:
+    output_dir: str = "debug_output"
 
-@dataclass(frozen=True)
-class PipelineSettings:
-    default_target_word_count: int
+@dataclass
+class StoryForgeConfig:
+    llm: LLMConfig
+    storage: StorageConfig
+    server: ServerConfig
+    pipeline: PipelineConfig
+    console: ConsoleConfig
+    debug: DebugConfig
 
-@dataclass(frozen=True)
-class StoryForgeSettings:
-    project_root: Path
-    config_file: Path
-    console: ConsoleSettings
-    debug: DebugSettings
-    pipeline: PipelineSettings
-
-# 加载函数
-@lru_cache(maxsize=1)
-def get_settings() -> StoryForgeSettings
-def get_settings_with_sources() -> Tuple[StoryForgeSettings, Dict[str, str]]
+def load_config(path: Optional[str] = None) -> StoryForgeConfig
+def get_config(reload: bool = False) -> StoryForgeConfig
+def reset_config() -> None
 ```
 
 ## Agents (agents/)
@@ -626,47 +624,49 @@ class IPGenerator:
     ) -> StoryBible
 ```
 
-## Storage (backend/)
+## Storage (core/storage/)
 
-### `backend/storage.py`
+### `core/storage/manager.py`
 
-JSON 文件存储层，存储位置由 `config.storage.data_dir` 决定。
+统一存储管理器，存储位置由 `config.storage.data_dir` 决定。
 
 **目录结构**：
 ```
 {data_dir}/
-├── index.json         # 小说清单索引
+├── index.json            # 小说清单索引
 └── novels/
-    └── {novel_id}.json  # 单个小说完整状态
+    └── {novel_id}/       # 单本小说目录
+    ├── novel_meta.json
+    ├── chapters.json
+    ├── reviews.json
+    ├── video_script.json                # 镜头剧本
+    ├── visual_bible.json                # 视觉圣经 / 人物视觉档
+    ├── video_render_plan.json           # 渲染计划
+    ├── video_output.json                # 最终输出元数据
+    ├── video_consistency_report.json    # 一致性检查报告
+    └── ...
 ```
 
 **函数**：
 
 ```python
-from backend import storage
+from core.storage import get_storage_manager
 
-# 保存小说（同时更新索引）
-storage.save_novel(state: NovelState) -> None
+sm = get_storage_manager()
 
-# 加载单个小说
-storage.load_novel(novel_id: str) -> Optional[NovelState]
-
-# 列出所有小说（从 index.json）
-storage.list_novels() -> List[dict]
-
-# 仅更新索引（不保存小说）
-storage.update_novel_index(state: NovelState) -> None
-
-# 删除小说（同时更新索引）
-storage.delete_novel(novel_id: str) -> bool
-
-# 重建索引（扫描 novels/ 目录）
-storage.rebuild_index() -> int
+sm.create_novel(novel_id: str, title: str = "", genre: str = "", concept: str = "", target_word_count: int = 3000)
+sm.load_novel_meta(novel_id: str)
+sm.save_chapters(novel_id: str, chapters: Dict[int, Chapter])
+sm.load_chapters(novel_id: str)
+sm.list_novels() -> List[dict]
+sm.delete_novel(novel_id: str) -> bool
+sm.rebuild_index() -> int
 ```
 
-### `backend/app.py` (Flask API)
+### `backend/app.py` (Flask API, deprecated)
 
-后端通过 Flask 提供 API，默认端口 5089。
+`backend/app.py` 已下线，不再承载业务 API；仅返回迁移提示（HTTP 410）。
+原有 API 已并入 `web_console/app.py`（FastAPI，默认端口 8787）。
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
@@ -798,8 +798,50 @@ FastAPI 操作界面，默认端口 8787。
 - 并发上限控制
 - 日志下载
 - 人物 IP 操作区（手动触发）
+- 统一业务 API 网关（包含原 backend 接口）
+
+依赖注入策略：每请求 scoped（通过 `Depends` 创建独立 `StorageManager`）。
 
 启动命令：
 ```bash
 uvicorn web_console.app:app --reload --port 8787
 ```
+
+### Video API
+
+web_console 提供视频生成功能的操作接口（实验性）：
+
+- `POST /api/video/script/generate`：根据指定小说生成镜头剧本与视觉圣经草稿。
+    - 请求示例：
+        ```json
+        {
+            "novel_id": "demo_001",
+            "chapter": 1,
+            "include_assets": true
+        }
+        ```
+    - 返回：任务接受结果（含生成的 `video_script_id` / `visual_bible_id` 引用，或错误信息）。
+
+- `POST /api/video/consistency/check`：对已有剧本/视觉圣经/镜头资产运行量化一致性检查，返回 `ConsistencyReport`。
+    - 请求示例：
+        ```json
+        {
+            "novel_id": "demo_001",
+            "script_id": "...",
+            "thresholds": {"face_consistency": 0.85}
+        }
+        ```
+    - 返回：`ConsistencyReport`（包含 `metrics`, `issues`, `fallback_reasons`，以及是否触发自动回退）。
+
+- `GET /api/video/consistency/{novel_id}`：查询指定小说最近一次一致性检查报告（若有）。
+
+数据模型摘要（core/models/video_assets.py）:
+
+- `VideoScript`：镜头序列与元数据
+- `VisualBible`：人物视觉简介与场景参考
+- `VideoRenderPlan`：镜头渲染计划与片段列表
+- `VideoOutput`：最终视频输出元数据（文件引用）
+- `ConsistencyReport`：一致性指标、阈值与回退原因
+
+存储位置：由 `config.storage.data_dir` 决定，视频产物以 `video_*` 文件名由 `StorageManager` 管理（例如 `video_script.json`, `visual_bible.json`, `video_consistency_report.json`）。
+

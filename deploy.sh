@@ -14,7 +14,7 @@ CONFIG_FILE="$USER_CONFIG_DIR/storyforge.yaml"
 CONFIG_EXAMPLE_MD="$PROJECT_ROOT/docs/config-example.md"
 
 # 默认端口（仅当读不到配置时使用）
-DEFAULT_PORT=5089
+DEFAULT_PORT=8787
 DEFAULT_HOST="0.0.0.0"
 
 RED="\033[31m"
@@ -162,7 +162,7 @@ start_server() {
     log_info "配置文件: $CONFIG_FILE"
 
     cd "$PROJECT_ROOT"
-    gunicorn -w 2 -b "$host:$port" backend.app:app \
+    gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b "$host:$port" web_console.app:app \
         --pid "$PID_FILE" \
         --daemon \
         --access-logfile "$LOG_DIR/access.log" \

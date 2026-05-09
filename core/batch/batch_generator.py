@@ -345,14 +345,21 @@ class BatchGenerator:
             
             # 简单的 ETA 估算（如果有已完成的）
             if progress.completed > 0:
-                elapsed = time.time() - min(
-                    job.created_at for job in self.jobs.values()
-                    if job.created_at
-                )
-                avg_per_chapter = elapsed / progress.completed
-                progress.estimated_remaining = int(
-                    avg_per_chapter * (progress.total - progress.completed)
-                )
+                created_times = []
+                for job in self.jobs.values():
+                    if not job.created_at:
+                        continue
+                    try:
+                        created_times.append(datetime.fromisoformat(job.created_at).timestamp())
+                    except ValueError:
+                        continue
+
+                if created_times:
+                    elapsed = time.time() - min(created_times)
+                    avg_per_chapter = elapsed / progress.completed
+                    progress.estimated_remaining = int(
+                        avg_per_chapter * (progress.total - progress.completed)
+                    )
             
             return progress
     
