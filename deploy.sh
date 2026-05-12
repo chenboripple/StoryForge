@@ -121,7 +121,6 @@ install_python() {
     log_info "安装 Python 依赖..."
     pip install -q --upgrade pip
     pip install -q -r "$PROJECT_ROOT/requirements.txt"
-    pip install -q -r "$PROJECT_ROOT/requirements-web.txt"
     log_ok "Python 依赖安装完成"
 }
 

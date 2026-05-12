@@ -414,7 +414,7 @@ class PromptAssembler:
     ) -> str
 ```
 
-### `core/config.py` (YAML 配置 - backend 用)
+### `core/config.py` (YAML 配置 - 旧)
 
 ```python
 @dataclass
@@ -663,10 +663,9 @@ sm.delete_novel(novel_id: str) -> bool
 sm.rebuild_index() -> int
 ```
 
-### `backend/app.py` (Flask API, deprecated)
+### `web_console/routes/*` — 通用 API
 
-`backend/app.py` 已下线，不再承载业务 API；仅返回迁移提示（HTTP 410）。
-原有 API 已并入 `web_console/app.py`（FastAPI，默认端口 8787）。
+下列业务 API 由 FastAPI 网关提供（默认端口 8787）。所有端点统一通过 `web_console.app:app` 暴露，实际路由按领域拆分在 `web_console/routes/`。
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
@@ -785,20 +784,21 @@ sm.rebuild_index() -> int
 
 ## web_console (FastAPI)
 
-### `web_console/app.py`
+### `web_console/`
 
-FastAPI 操作界面，默认端口 8787。
+FastAPI 操作界面，默认端口 8787。模块按职责分层：
+
+- `web_console/app.py`        — FastAPI 实例化、路由聚合、React 构建产物静态托管（含 SPA fallback）
+- `web_console/routes/`       — 按领域分组的 APIRouter（health/tasks/templates/novels/import/ip/video/ai）
+- `web_console/services/`     — 业务实现（ip / video / vector / novels）
+- `web_console/runtime/`      — 任务队列、状态持久化、模板白名单
+- `web_console/dependencies.py` — DI 提供器（每请求 StorageManager）
 
 功能：
-- 启动任务
-- 查看状态
-- 查看日志
-- 停止任务
-- 模板保存
-- 并发上限控制
-- 日志下载
+- 启动任务、查看状态、查看日志、停止任务
+- 模板保存、并发上限控制、日志下载
 - 人物 IP 操作区（手动触发）
-- 统一业务 API 网关（包含原 backend 接口）
+- 视频剧本与一致性检查（实验性）
 
 依赖注入策略：每请求 scoped（通过 `Depends` 创建独立 `StorageManager`）。
 
