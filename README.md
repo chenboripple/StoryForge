@@ -41,8 +41,8 @@ python examples/multi_agent_demo.py --agent-routing
 ### Web UI
 
 ```bash
-# 安装前端依赖
-pip install -r requirements-web.txt
+# 安装后端依赖
+pip install -r requirements.txt
 cd client
 npm install
 npm run build
@@ -70,7 +70,14 @@ npm start
 uvicorn web_console.app:app --reload --port 8787
 ```
 
-浏览器访问 `http://127.0.0.1:8787`。支持启动任务、查看状态、查看日志、停止任务、模板保存、并发上限控制、人物 IP 生成等。
+浏览器访问 `http://127.0.0.1:8787`，根路径直接服务 `client/build/` 的 React UI。若尚未执行 `npm run build`，根路径会返回 JSON 提示。
+
+`web_console/` 内部按职责分层：
+
+- `routes/`   - 按领域分组的 APIRouter（health/tasks/templates/novels/import/ip/video/ai）
+- `services/` - 业务实现（ip / video / vector / novels）
+- `runtime/`  - 任务队列、状态持久化、模板白名单
+- `app.py`    - FastAPI 实例化、路由聚合、React 静态托管（含 SPA fallback）
 
 ---
 
@@ -143,8 +150,6 @@ StoryForge/
 │   ├── outline/            # 大纲细化
 │   ├── extraction/         # 知识萃取
 │   └── ip_generation/      # IP 生成
-├── backend/                # 兼容层（已下线）
-│   └── app.py              # Deprecated: 返回 410 提示迁移到 FastAPI
 ├── client/                 # React 前端
 │   ├── src/
 │   │   ├── App.jsx
@@ -152,7 +157,12 @@ StoryForge/
 │   │   └── pages/          # 页面组件
 │   └── package.json
 ├── web_console/            # FastAPI 操作界面
-│   └── app.py
+│   ├── app.py              # 实例化 + 路由聚合 + 静态托管
+│   ├── dependencies.py     # DI 提供器（每请求 StorageManager）
+│   ├── utils.py            # 通用工具函数
+│   ├── routes/             # 按领域分组的 APIRouter
+│   ├── services/           # 业务实现（ip / video / vector / novels）
+│   └── runtime/            # 任务队列、状态持久化、模板白名单
 ├── examples/               # 示例脚本
 │   ├── debug_pipeline.py   # 调试脚本（推荐）
 │   ├── demo_pipeline.py    # 基础演示

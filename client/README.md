@@ -18,7 +18,7 @@ npm start
 npm run build
 ```
 
-构建产物输出到 `client/build/`。统一网关为 FastAPI (`web_console/app.py`)；`backend/app.py` 已下线，仅保留迁移提示。
+构建产物输出到 `client/build/`，统一由 FastAPI 网关 (`web_console/app.py`) 通过 `StaticFiles` 挂载在 `/` 路径。
 
 ## 文件结构
 

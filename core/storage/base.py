@@ -5,12 +5,76 @@ Storage Base - 存储基类
 """
 import json
 import os
+import re
 from typing import TypeVar, Type, Optional, Any
 from dataclasses import dataclass
 
 from core.models.base import BaseModel
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar('T', bound='BaseModel')
+
+# 安全验证相关
+SAFE_NOVEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+MAX_NOVEL_ID_LENGTH = 100
+
+
+def _safe_novel_id(novel_id: str) -> str:
+    """
+    清洗并验证小说 ID，防止路径遍历攻击。
+
+    Args:
+        novel_id: 原始小说 ID
+
+    Returns:
+        清洗后的安全小说 ID
+
+    Raises:
+        ValueError: 如果小说 ID 不安全或无效
+    """
+    if not novel_id or not isinstance(novel_id, str):
+        raise ValueError("小说 ID 不能为空")
+
+    # 移除任何路径分隔符
+    cleaned = novel_id.strip()
+    cleaned = cleaned.replace("/", "_")
+    cleaned = cleaned.replace("\\", "_")
+    cleaned = cleaned.replace("..", "_")
+
+    # 如果结果为空，生成一个安全的 ID
+    if not cleaned:
+        from datetime import datetime
+
+        cleaned = f"novel_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # 验证长度
+    if len(cleaned) > MAX_NOVEL_ID_LENGTH:
+        cleaned = cleaned[:MAX_NOVEL_ID_LENGTH]
+
+    # 最终安全检查 - 确保只包含安全字符
+    if not SAFE_NOVEL_ID_PATTERN.match(cleaned):
+        # 替换所有不安全字符
+        cleaned = re.sub(r"[^a-zA-Z0-9_-]", "_", cleaned)
+
+    return cleaned
+
+
+def _validate_path_safe(base_path: str, target_path: str) -> bool:
+    """
+    验证目标路径是否在基础路径内，防止路径遍历。
+
+    Args:
+        base_path: 基础路径（允许的根目录）
+        target_path: 目标路径（需要验证的路径）
+
+    Returns:
+        True 如果路径安全，否则 False
+    """
+    base_path = os.path.abspath(base_path)
+    target_path = os.path.abspath(target_path)
+
+    # 确保目标路径是基础路径的子路径
+    common = os.path.commonpath([base_path, target_path])
+    return common == base_path
 
 
 @dataclass
@@ -27,15 +91,40 @@ class StorageConfig:
 
     def novel_dir(self, novel_id: str) -> str:
         """单个小说的目录（分文件存储时）"""
-        return os.path.join(self.novels_dir, novel_id)
+        safe_id = _safe_novel_id(novel_id)
+        return os.path.join(self.novels_dir, safe_id)
 
     @property
     def index_file(self) -> str:
         return os.path.join(self.data_dir, "index.json")
 
     def path_for(self, novel_id: str, filename: str) -> str:
-        """获取某个小说下某个文件的完整路径"""
-        return os.path.join(self.novel_dir(novel_id), filename)
+        """
+        获取某个小说下某个文件的完整路径（安全版本）
+
+        Args:
+            novel_id: 小说 ID（会被清洗）
+            filename: 文件名（不能包含路径分隔符）
+
+        Returns:
+            安全的文件路径
+
+        Raises:
+            ValueError: 如果文件名包含路径分隔符
+        """
+        # 验证文件名不包含路径分隔符
+        if "/" in filename or "\\" in filename or ".." in filename:
+            raise ValueError(f"文件名不能包含路径分隔符: {filename}")
+
+        safe_id = _safe_novel_id(novel_id)
+        novel_dir = os.path.join(self.novels_dir, safe_id)
+        full_path = os.path.abspath(os.path.join(novel_dir, filename))
+
+        # 验证最终路径在小说目录内
+        if not _validate_path_safe(novel_dir, full_path):
+            raise ValueError(f"路径不安全: {filename}")
+
+        return full_path
 
 
 class ModelStorage:
@@ -67,7 +156,7 @@ class ModelStorage:
                 model.to_dict(),
                 f,
                 ensure_ascii=self.config.ensure_ascii,
-                indent=self.config.indent
+                indent=self.config.indent,
             )
 
     def load(self, novel_id: str) -> Optional[T]:
@@ -111,7 +200,7 @@ class ListModelStorage(ModelStorage):
                 [item.to_dict() for item in items],
                 f,
                 ensure_ascii=self.config.ensure_ascii,
-                indent=self.config.indent
+                indent=self.config.indent,
             )
 
     def load_list(self, novel_id: str) -> list:

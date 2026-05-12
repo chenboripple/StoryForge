@@ -282,19 +282,21 @@ Pipeline 本身不依赖 Storage，可通过以下模式保存结果：
 ```python
 from core.config import get_config
 from core.llm_factory import create_llm_client
+from core.storage import get_storage_manager
 from pipeline.novel_pipeline import create_pipeline
-from backend import storage
 
 # 1. 加载配置与构造组件
 config = get_config()
 llm = create_llm_client(config.llm)
 pipeline = create_pipeline(llm_client=llm)
+sm = get_storage_manager()
 
 # 2. 运行 Pipeline
 result = pipeline.run(state)
 
-# 3. 持久化到 Storage
-storage.save_novel(result)
+# 3. 持久化（StorageManager 按模型分文件，调用粒度方法）
+#    sm.save_novel_meta(novel_id, meta)
+#    sm.save_chapters(novel_id, chapters)
 ```
 
 完整示例见 `examples/debug_pipeline.py` 和 `examples/demo_pipeline.py`。
