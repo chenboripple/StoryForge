@@ -9,14 +9,11 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │                         Web 前端层                                   │
 ├─────────────────────────────────────────────────────────────────────┤
 │  web_console/  (FastAPI, 端口 8787)                                 │
-│  - 任务管理界面                                                      │
-│  - 创作进度监控                                                      │
-│  - 人物 IP 操作区                                                    │
-│  - 日志查看                                                          │
-│  - 统一 API 网关（原 backend API 已并入）                            │
-│                                                                      │
-│  backend/  (Flask, 已下线)                                           │
-│  - 仅保留迁移提示（410 Gone）                                        │
+│  - routes/   按领域分组的 APIRouter（health/tasks/templates/novels/ │
+│              import/ip/video/ai）                                   │
+│  - services/ 业务实现（ip / video / vector / novels）               │
+│  - runtime/  任务队列、状态持久化、模板白名单                       │
+│  - app.py    实例化 + include_router + React 构建产物静态托管       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         存储层                                       │
 │  - ~/.storyforge/data/  (小说数据, YAML 配置决定)                    │
@@ -70,7 +67,7 @@ StoryForge 使用单一配置文件：
 - 不在请求之间共享 `StorageManager` 内存缓存，降低跨请求状态污染风险
 - 后台队列任务（pipeline/ip）不走请求上下文，按任务执行周期创建独立存储实例
 
-实现位置：`web_console/app.py` 中 `get_storage_manager_dep()` 与 `_new_storage_manager()`。
+实现位置：`web_console/dependencies.py` 中 `get_storage_manager_dep()` 与 `_new_storage_manager()`。
 
 ## 设计原则
 

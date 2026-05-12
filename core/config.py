@@ -4,7 +4,7 @@ StoryForge - 配置加载
 配置文件位置：
     ~/.storyforge/storyforge.yaml
 
-配置项包括：大模型、存储位置、服务器端口、Pipeline 行为等。
+配置项包括：大模型、存储位置、服务器端口、Pipeline行为等。
 不依赖系统环境变量。
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 
 try:
     import yaml  # type: ignore
@@ -22,14 +22,30 @@ except ImportError:  # pragma: no cover
 _DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".storyforge", "storyforge.yaml")
 
 
-# ==================== 数据结构 ====================
+# -----------------------------------------------------------------------------
+# 安全配置
+# -----------------------------------------------------------------------------
+
+# 安全常量
+DEFAULT_MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
+ALLOWED_UPLOAD_TYPES = {
+    "text": [".txt", ".md", ".markdown", ".html", ".htm", ".rst", ".org"],
+    "epub": [".epub"],
+    "pdf": [".pdf"],
+    "image": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp"],
+}
+
+
+# -----------------------------------------------------------------------------
+# 配置数据类
+# -----------------------------------------------------------------------------
 
 @dataclass
 class LLMConfig:
-    provider: str = "mock"           # mock | openai | anthropic
+    provider: str = "mock"  # mock | openai | anthropic
     model: str = "gpt-4o-mini"
     api_key: str = ""
-    base_url: str = ""               # 自定义 endpoint（例如代理或私有部署）
+    base_url: str = ""  # 自定义 endpoint（例如代理或私有部署）
     temperature: float = 0.7
     timeout: int = 60
     extra: Dict[str, Any] = field(default_factory=dict)  # 透传 SDK 额外参数
@@ -44,8 +60,16 @@ class StorageConfig:
 class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8787
-    cors_origins: str = "*"
+    cors_origins: Optional[List[str]] = None  # None 表示允许所有（旧行为），或者列表如 ["http://localhost:3000"]
+    cors_allow_credentials: bool = False
     debug: bool = False
+
+
+@dataclass
+class SecurityConfig:
+    """安全相关配置。"""
+    max_upload_size: int = DEFAULT_MAX_UPLOAD_SIZE  # 最大上传字节数
+    allowed_upload_extensions: Optional[List[str]] = None  # None 表示使用默认
 
 
 @dataclass
@@ -58,7 +82,7 @@ class PipelineConfig:
 class ConsoleConfig:
     max_running_tasks: int = 3
     default_command: str = "python examples/demo_pipeline.py"
-    template_file: str = "~/.storyforge/templates.json"
+    template_file: str = "~/.storyforge/templates.yaml"
 
     @property
     def template_file_abs(self) -> str:
@@ -78,19 +102,20 @@ class StoryForgeConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     console: ConsoleConfig = field(default_factory=ConsoleConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
-    config_path: Optional[str] = None     # 加载来源（None 表示使用默认值）
+    config_path: Optional[str] = None  # 加载来源（None 表示使用默认值）
 
     @property
     def data_dir_abs(self) -> str:
         """返回绝对路径的 data_dir。
 
         路径解析规则：
-        - 绝对路径：直接使用
-        - ~/ 开头：相对于用户主目录展开
-        - 相对路径：相对于配置文件所在目录解析；若无配置文件则相对于当前工作目录
+            绝对路径：直接使用
+            ~/ 开头：相对于用户主目录展开
+            相对路径：相对于配置文件目录解析；若无配置文件则相对于当前工作目录
         """
         path = self.storage.data_dir
 
@@ -111,9 +136,11 @@ class StoryForgeConfig:
         return os.path.normpath(os.path.join(base_dir, path))
 
 
-# ==================== 加载逻辑 ====================
+# -----------------------------------------------------------------------------
+# 加载逻辑
+# -----------------------------------------------------------------------------
 
-def _candidate_paths() -> list[str]:
+def _candidate_paths() -> List[str]:
     return [_DEFAULT_CONFIG_PATH]
 
 
@@ -162,6 +189,7 @@ def load_config(path: Optional[str] = None) -> StoryForgeConfig:
     _merge_section(cfg.llm, raw.get("llm", {}))
     _merge_section(cfg.storage, raw.get("storage", {}))
     _merge_section(cfg.server, raw.get("server", {}))
+    _merge_section(cfg.security, raw.get("security", {}))
     _merge_section(cfg.pipeline, raw.get("pipeline", {}))
     _merge_section(cfg.console, raw.get("console", {}))
     _merge_section(cfg.debug, raw.get("debug", {}))
@@ -170,7 +198,9 @@ def load_config(path: Optional[str] = None) -> StoryForgeConfig:
     return cfg
 
 
-# ==================== 全局单例 ====================
+# -----------------------------------------------------------------------------
+# 全局单例
+# -----------------------------------------------------------------------------
 
 _cached: Optional[StoryForgeConfig] = None
 

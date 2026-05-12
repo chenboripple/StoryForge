@@ -1,15 +1,34 @@
 """
 StoryForge 模型层（Models Layer）
 定义所有数据结构，与存储解耦
+
+分组说明：
+- base.py - 基础模型类
+- content/ - 创作相关（小说、大纲、章节、审稿、校对）
+- world/ - 世界观相关（人物、地点、势力、时间线）
+- extraction/ - 知识萃取相关
+- ip/ - IP 生成相关
+- agent/ - Agent 通信相关
+- video/ - 视频生成相关
+
+向后兼容：
+旧的导入路径（如 from .novel_meta import NovelMeta）继续有效
 """
+# 基础模块
 from .base import BaseModel, TimestampMixin, JSONSerializable
-from .novel_meta import NovelMeta, PipelineStage
-from .outline import Outline, ChapterOutline, VolumeOutline
-from .characters import Character, Relationship, RelationshipType, CharacterGraph
-from .world_setting import WorldSetting, TimelineEvent, Location, LocationType, Faction, FactionType
-from .chapter import Chapter, ChapterStatus
-from .review import Review, ReviewRecord, DimensionScore, ReviewVerdict
-from .proofread import Proofread, ProofreadRecord, ProofreadIssue
+
+# 分组模块导入
+from .content import (
+    NovelMeta, PipelineStage,
+    Outline, ChapterOutline, VolumeOutline,
+    Chapter, ChapterStatus,
+    Review, ReviewRecord, DimensionScore, ReviewVerdict, ReviewIssue,
+    Proofread, ProofreadRecord, ProofreadIssue, ProofreadIssueType,
+)
+from .world import (
+    Character, Relationship, RelationshipType, CharacterGraph,
+    WorldSetting, TimelineEvent, Location, LocationType, Faction, FactionType,
+)
 from .extraction import (
     ChapterAnalysis,
     ExtractedEntity,
@@ -19,9 +38,50 @@ from .extraction import (
     CharacterUpdate,
     WorldUpdate,
 )
-from .ip_assets import CharacterIP, RelationshipEdge, SceneSetting, DerivedSetting, StoryBible
-from .agent_comm import AgentMessage, RoutingSuggestion
-from .video_assets import (
+from .ip import (
+    CharacterIP, RelationshipEdge, SceneSetting, DerivedSetting, StoryBible,
+)
+from .agent import (
+    AgentMessage, RoutingSuggestion,
+)
+from .video import (
+    ShotSpec,
+    VideoScript,
+    CharacterVisualProfile,
+    SceneCanonicalProfile,
+    VisualBible,
+    VideoAsset,
+    AssetManifest,
+    VideoRenderPlan,
+    ConsistencyIssue,
+    ConsistencyMetrics,
+    ConsistencyThresholds,
+    ConsistencyReport,
+    VideoOutput,
+    VideoState,
+)
+
+# 向后兼容：旧的单文件导入路径仍然有效
+# 这些别名确保现有代码不会中断
+from .content.novel_meta import NovelMeta, PipelineStage
+from .content.outline import Outline, ChapterOutline, VolumeOutline
+from .content.chapter import Chapter, ChapterStatus
+from .content.review import Review, ReviewRecord, DimensionScore, ReviewVerdict, ReviewIssue
+from .content.proofread import Proofread, ProofreadRecord, ProofreadIssue, ProofreadIssueType
+from .world.characters import Character, Relationship, RelationshipType, CharacterGraph
+from .world.world_setting import WorldSetting, TimelineEvent, Location, LocationType, Faction, FactionType
+from .extraction.extraction import (
+    ChapterAnalysis,
+    ExtractedEntity,
+    ExtractedCharacter,
+    ExtractedLocation,
+    ExtractedForeshadowing,
+    CharacterUpdate,
+    WorldUpdate,
+)
+from .ip.ip_assets import CharacterIP, RelationshipEdge, SceneSetting, DerivedSetting, StoryBible
+from .agent.agent_comm import AgentMessage, RoutingSuggestion
+from .video.video_assets import (
     ShotSpec,
     VideoScript,
     CharacterVisualProfile,
@@ -41,28 +101,23 @@ from .video_assets import (
 __all__ = [
     # Base
     'BaseModel', 'TimestampMixin', 'JSONSerializable',
-    # Novel Meta
+    # Content (创作相关)
     'NovelMeta', 'PipelineStage',
-    # Outline
     'Outline', 'ChapterOutline', 'VolumeOutline',
-    # Characters
-    'Character', 'Relationship', 'RelationshipType', 'CharacterGraph',
-    # World Setting
-    'WorldSetting', 'TimelineEvent', 'Location', 'LocationType', 'Faction', 'FactionType',
-    # Chapter
     'Chapter', 'ChapterStatus',
-    # Review
-    'Review', 'ReviewRecord', 'DimensionScore', 'ReviewVerdict',
-    # Proofread
-    'Proofread', 'ProofreadRecord', 'ProofreadIssue',
-    # Extraction
+    'Review', 'ReviewRecord', 'DimensionScore', 'ReviewVerdict', 'ReviewIssue',
+    'Proofread', 'ProofreadRecord', 'ProofreadIssue', 'ProofreadIssueType',
+    # World (世界观相关)
+    'Character', 'Relationship', 'RelationshipType', 'CharacterGraph',
+    'WorldSetting', 'TimelineEvent', 'Location', 'LocationType', 'Faction', 'FactionType',
+    # Extraction (萃取相关)
     'ChapterAnalysis', 'ExtractedEntity', 'ExtractedCharacter', 'ExtractedLocation',
     'ExtractedForeshadowing', 'CharacterUpdate', 'WorldUpdate',
-    # IP Assets
+    # IP (IP生成相关)
     'CharacterIP', 'RelationshipEdge', 'SceneSetting', 'DerivedSetting', 'StoryBible',
-    # Agent Communication
+    # Agent (Agent通信相关)
     'AgentMessage', 'RoutingSuggestion',
-    # Video
+    # Video (视频生成相关)
     'ShotSpec', 'VideoScript', 'CharacterVisualProfile', 'SceneCanonicalProfile',
     'VisualBible', 'VideoAsset', 'AssetManifest', 'VideoRenderPlan',
     'ConsistencyIssue', 'ConsistencyMetrics', 'ConsistencyThresholds',

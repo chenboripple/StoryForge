@@ -175,14 +175,12 @@ python3 examples/multi_agent_demo.py --agent-routing
 所有 Agent 间消息和路由建议都会保存在 NovelState 中：
 
 ```python
-# 保存
-from backend import storage
-storage.save_novel(state)
+# 通过 StorageManager 持久化（按模型分文件）
+from core.storage import get_storage_manager
+sm = get_storage_manager()
 
-# 加载后消息和建议都能恢复
-state = storage.load_novel("demo_001")
-print(len(state.agent_messages))
-print(len(state.routing_suggestions))
+# 加载后消息和路由建议各自从对应文件恢复
+# 具体方法见 core/storage/manager.py
 ```
 
 ## API 参考
