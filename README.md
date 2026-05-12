@@ -75,9 +75,19 @@ uvicorn web_console.app:app --reload --port 8787
 `web_console/` 内部按职责分层：
 
 - `routes/`   - 按领域分组的 APIRouter（health/tasks/templates/novels/import/ip/video/ai）
+  - `routes/v1/` - 版本化 API（/api/v1/）
 - `services/` - 业务实现（ip / video / vector / novels）
-- `runtime/`  - 任务队列、状态持久化、模板白名单
-- `app.py`    - FastAPI 实例化、路由聚合、React 静态托管（含 SPA fallback）
+- `runtime/`  - TaskRegistry（任务队列、状态持久化）、模板白名单
+- `middleware/` - 统一错误处理、请求 ID、CORS
+- `security.py` - 文件上传安全、路径安全
+- `app.py`    - FastAPI 实例化、生命周期管理、路由聚合、React 静态托管（含 SPA fallback）
+
+### API 版本管理
+
+- **新版 API**：`/api/v1/` 前缀（推荐）
+- **旧版 API**：`/api/` 前缀（保持向后兼容）
+
+详见 [docs/api-reference.md](docs/api-reference.md)。
 
 ---
 
@@ -104,9 +114,14 @@ storage:
 
 server:
     host: 0.0.0.0
-  port: 8787
-    cors_origins: "*"
-  debug: false
+    port: 8787
+    cors_origins: ["*"]  # 允许的源列表，或 "*" 表示全部
+    cors_allow_credentials: false
+    debug: false
+
+security:
+    max_upload_size: 52428800  # 50MB
+    allowed_upload_extensions: null  # null 使用默认类型
 
 pipeline:
     max_review_rounds: 3
@@ -135,12 +150,15 @@ python -m core.config
 ```
 StoryForge/
 ├── core/                   # 核心基类
-│   ├── state.py            # NovelState 状态管理
-│   ├── agent.py            # BaseAgent + MessageBus
-│   ├── schema.py           # 结构化输出 Schema
-│   ├── memory.py           # 记忆系统
-│   ├── prompt_assembler.py # 动态 Prompt 组装
+│   ├── models/             # 数据模型（按领域分组）
+│   │   ├── content/        # 内容相关：NovelMeta, Chapter, Outline, Review, Proofread
+│   │   ├── world/          # 世界设定：Characters, WorldSetting
+│   │   ├── agent/          # Agent相关：AgentPersona, MessageBus
+│   │   ├── extraction/     # 萃取相关：KnowledgeExtractor, ChapterAnalysis
+│   │   ├── ip/             # IP相关：IPAssets, StoryBible
+│   │   └── video/          # 视频相关：VideoScript, VisualBible, ConsistencyReport
 │   ├── config.py           # YAML 配置（全系统）
+│   ├── storage/            # 存储管理
 │   └── utils/              # 工具函数
 ├── agents/                 # Agent 角色定义
 │   └── creation_agents.py  # Writer / Reviewer / Reviser / Proofreader
@@ -157,19 +175,20 @@ StoryForge/
 │   │   └── pages/          # 页面组件
 │   └── package.json
 ├── web_console/            # FastAPI 操作界面
-│   ├── app.py              # 实例化 + 路由聚合 + 静态托管
-│   ├── dependencies.py     # DI 提供器（每请求 StorageManager）
+│   ├── app.py              # FastAPI 实例化、路由聚合、生命周期管理、SPA 托管
+│   ├── middleware/         # 中间件：统一错误处理、请求 ID、CORS
+│   ├── dependencies.py     # DI 提供器（StorageManager, TaskRegistry）
+│   ├── security.py         # 安全工具：路径安全、上传验证
 │   ├── utils.py            # 通用工具函数
-│   ├── routes/             # 按领域分组的 APIRouter
+│   ├── routes/             # 按领域分组的 APIRouter（含 /api/v1/ 版本化）
 │   ├── services/           # 业务实现（ip / video / vector / novels）
-│   └── runtime/            # 任务队列、状态持久化、模板白名单
+│   └── runtime/            # 任务队列、TaskRegistry、状态持久化、模板白名单
 ├── examples/               # 示例脚本
 │   ├── debug_pipeline.py   # 调试脚本（推荐）
 │   ├── demo_pipeline.py    # 基础演示
 │   └── multi_agent_demo.py # 多 Agent 演示
-├── docs/                   # 文档
-├── data/                   # 数据存储（可选）
 ├── tests/                  # 测试
+├── docs/                   # 文档
 ├── LICENSE                 # 许可证
 └── deploy.sh               # 部署脚本
 ```

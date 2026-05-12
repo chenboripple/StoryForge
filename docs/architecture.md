@@ -11,8 +11,11 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  web_console/  (FastAPI, 端口 8787)                                 │
 │  - routes/   按领域分组的 APIRouter（health/tasks/templates/novels/ │
 │              import/ip/video/ai）                                   │
+│  - routes/v1/ 版本化 API（/api/v1/）                                │
 │  - services/ 业务实现（ip / video / vector / novels）               │
-│  - runtime/  任务队列、状态持久化、模板白名单                       │
+│  - runtime/  TaskRegistry（任务队列、状态持久化）、模板白名单       │
+│  - middleware/ 统一错误处理、请求 ID、CORS                          │
+│  - security.py  上传安全、路径安全                                  │
 │  - app.py    实例化 + include_router + React 构建产物静态托管       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         存储层                                       │
@@ -37,12 +40,13 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Core 层                                       │
 ┌─────────────────────────────────────────────────────────────────────┐
-│  core/state.py           NovelState, ChapterStatus, ReviewRecord     │
-│  core/agent.py           BaseAgent, AgentPersona, MessageBus         │
-│  core/schema.py          ReviewResult, ProofreadResult, ChapterContent│
-│  core/memory.py          StoryMemory (事件/人物/世界状态)            │
-│  core/prompt_assembler.py  PromptAssembler (动态Prompt+人味化)       │
-│  core/config.py          ~/.storyforge/storyforge.yaml  (全系统配置)  │
+│  core/models/content/   NovelMeta, Chapter, Outline, Review, Proofread│
+│  core/models/world/     Characters, WorldSetting                    │
+│  core/models/agent/     BaseAgent, AgentPersona, MessageBus         │
+│  core/models/extraction/  KnowledgeExtractor, ChapterAnalysis       │
+│  core/models/ip/        IPAssets, StoryBible                       │
+│  core/models/video/     VideoScript, VisualBible, ConsistencyReport│
+│  core/config.py         ~/.storyforge/storyforge.yaml  (全系统配置) │
 ├─────────────────────────────────────────────────────────────────────┤
 │                       stages/ 模块                                   │
 │  stages/outline/         OutlineGenerator (章级细纲生成)            │
@@ -59,6 +63,45 @@ StoryForge 使用单一配置文件：
 - 加载入口：`core/config.py`
 - 用途：FastAPI API 网关、Pipeline 与存储路径
 
+配置结构：
+
+```yaml
+llm:
+    provider: mock/openai/anthropic
+    model: gpt-4o-mini
+    api_key: ""
+    base_url: ""
+    temperature: 0.7
+    timeout: 60
+    extra: {}
+
+storage:
+    data_dir: ~/.storyforge/data
+
+server:
+    host: 0.0.0.0
+    port: 8787
+    cors_origins: ["*"]  # 允许的源列表
+    cors_allow_credentials: false
+    debug: false
+
+security:
+    max_upload_size: 52428800  # 50MB
+    allowed_upload_extensions: null  # null 使用默认类型
+
+pipeline:
+    max_review_rounds: 3
+    default_target_word_count: 3000
+
+console:
+    max_running_tasks: 3
+    default_command: python examples/demo_pipeline.py
+    template_file: ~/.storyforge/templates.json
+
+debug:
+    output_dir: debug_output
+```
+
 ## 依赖注入策略
 
 网关采用 **每请求 scoped DI**：
@@ -69,9 +112,39 @@ StoryForge 使用单一配置文件：
 
 实现位置：`web_console/dependencies.py` 中 `get_storage_manager_dep()` 与 `_new_storage_manager()`。
 
+## TaskRegistry 全局状态管理
+
+`web_console/runtime/registry.py` 中的 `TaskRegistry` 封装了所有任务相关状态：
+
+- `tasks` - Pipeline 任务运行时
+- `ip_tasks` - IP 生成任务运行时
+- `task_queue` - 任务队列
+- `task_runners` - 任务执行器注册表
+
+**向后兼容**：`web_console/runtime/queue.py` 作为兼容层，旧代码可以继续使用全局变量。
+
+## 中间件与错误处理
+
+- **RequestIdMiddleware**：为每个请求生成/传递唯一 ID（`X-Request-ID` 响应头）
+- **统一错误处理**：标准错误响应格式，含 `request_id`、`error_code`、`details`
+- **CORS 中间件**：可配置的跨域策略
+
+## API 版本管理
+
+- **新版 API**：`/api/v1/` 前缀
+  - `/api/v1/health`
+  - `/api/v1/novels`
+  - `/api/v1/tasks`
+  - `/api/v1/import`
+  - `/api/v1/ip`
+  - `/api/v1/video`
+
+- **旧版 API**：`/api/` 前缀（保持向后兼容）
+
 ## 设计原则
 
 ### 状态驱动
+
 所有 Agent 节点读写同一个 `NovelState` 对象：
 - 输入：当前全局状态
 - 输出：更新后的全局状态
@@ -79,6 +152,7 @@ StoryForge 使用单一配置文件：
 - `to_dict()` / `from_dict()` 支持完整的 JSON 序列化与反序列化（含枚举、嵌套 dataclass、int 章节键）
 
 ### 角色即提示词工程
+
 `AgentPersona` 的每个字段都有明确的工程用途：
 - `backstory`：影响 LLM 语气和知识倾向
 - `expertise`：影响任务分配和工具使用
@@ -87,16 +161,19 @@ StoryForge 使用单一配置文件：
 - `constraints`：影响输出边界
 
 ### 结构化输出 + 人味化
+
 - 审稿/校对使用 JSON Schema 确保可解析
 - PromptAssembler 自动集成人味化规则：禁用 AI 常见句式、提升文本自然度
 - AI 味检测（low/medium/high）：high 等级自动触发重写
 
 ### 记忆系统
+
 - StoryMemory：事件时间线 + 人物状态 + 世界设定
 - 一致性检查：自动检测人物名字、设定、时间线矛盾
 - 用于创作上下文注入
 
 ### Agent 间通讯 (MessageBus)
+
 - 发布/订阅模式
 - 按类型过滤
 - 定向投递
@@ -105,6 +182,7 @@ StoryForge 使用单一配置文件：
 ## 阶段详解
 
 ### 阶段一：创作 (Creation)
+
 1. **大纲细化** (outline_refiner)：从卷纲生成章级细纲
 2. **写作** (writer)：基于细纲创作章节
 3. **审稿** (reviewer)：8维度结构化评分 + AI味评估
@@ -112,18 +190,20 @@ StoryForge 使用单一配置文件：
 5. **校对** (proofreader)：6层级检查 + 终审判定（可发布/可交付/需返修）
 
 ### 阶段二：萃取 (Extraction)
+
 - 从章节提取事件、人物、伏笔
 - 构建知识图谱
 - 更新 memory
 
 ### 阶段三：IP 生成 (IP Generation)
+
 - 生成 story bible
 - 人物 IP 资产（人设、台词、画像提示词）
 - 存入 `local_store/ip_assets/`
 
 ## 状态字段分组
 
-`NovelState` 按阶段分组：
+`NovelMeta` 与相关模型按领域分组在 `core/models/content/`：
 
 ```python
 # 元数据
@@ -150,7 +230,6 @@ error_message, human_feedback, should_pause
 
 ## 相关文档
 
-- [Agent 系统设计](agent-system.md)
+- [Multi-Agent 系统使用指南](MULTI_AGENT_GUIDE.md)
 - [Pipeline 流程详解](pipeline.md)
 - [API 参考](api-reference.md)
-- [配置说明](config.md)
