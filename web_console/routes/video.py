@@ -32,7 +32,7 @@ class CheckVideoConsistencyRequest(BaseModel):
     scene_structure_min: float = Field(default=0.76, ge=0.0, le=1.0)
 
 
-@router.post("/api/video/script/generate")
+@router.post("/video/script/generate")
 async def generate_video_script(
     req: GenerateVideoScriptRequest,
     sm: StorageManager = Depends(get_storage_manager_dep),
@@ -53,7 +53,7 @@ async def generate_video_script(
     return {"ok": True, "result": result}
 
 
-@router.post("/api/video/consistency/check")
+@router.post("/video/consistency/check")
 async def check_video_consistency(
     req: CheckVideoConsistencyRequest,
     sm: StorageManager = Depends(get_storage_manager_dep),
@@ -83,7 +83,7 @@ async def check_video_consistency(
     return {"ok": True, "report": report}
 
 
-@router.get("/api/video/consistency/{novel_id}")
+@router.get("/video/consistency/{novel_id}")
 async def get_video_consistency(
     novel_id: str,
     sm: StorageManager = Depends(get_storage_manager_dep),

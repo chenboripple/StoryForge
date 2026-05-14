@@ -18,12 +18,12 @@ class SaveTemplateRequest(BaseModel):
     command: str
 
 
-@router.get("/api/templates")
+@router.get("/templates")
 async def list_templates() -> dict:
     return {"templates": _load_templates()}
 
 
-@router.post("/api/templates")
+@router.post("/templates")
 async def save_template(req: SaveTemplateRequest) -> dict:
     item = {
         "name": req.name.strip(),

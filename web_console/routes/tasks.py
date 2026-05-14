@@ -32,7 +32,7 @@ class StartTaskRequest(BaseModel):
     command: Optional[str] = None
 
 
-@router.post("/api/tasks/start")
+@router.post("/tasks/start")
 async def start_task(req: StartTaskRequest) -> dict:
     project_dir = _resolve_project_dir(req.project_dir)
     if not os.path.isdir(project_dir):
@@ -57,14 +57,14 @@ async def start_task(req: StartTaskRequest) -> dict:
     return {"ok": True, "task": _task_to_dict(task), "queue_position": queue_position}
 
 
-@router.get("/api/tasks")
+@router.get("/tasks")
 async def list_tasks() -> dict:
     with TASK_LOCK:
         tasks = sorted(TASKS.values(), key=lambda x: x.created_at, reverse=True)
         return {"tasks": [_task_to_dict(t) for t in tasks]}
 
 
-@router.get("/api/tasks/{task_id}/logs")
+@router.get("/tasks/{task_id}/logs")
 async def get_logs(task_id: str, offset: int = 0) -> dict:
     with TASK_LOCK:
         task = TASKS.get(task_id)
@@ -79,7 +79,7 @@ async def get_logs(task_id: str, offset: int = 0) -> dict:
     }
 
 
-@router.get("/api/tasks/{task_id}/log-file")
+@router.get("/tasks/{task_id}/log-file")
 async def get_log_file(task_id: str):
     with TASK_LOCK:
         task = TASKS.get(task_id)
@@ -91,7 +91,7 @@ async def get_log_file(task_id: str):
     return FileResponse(log_file, filename=f"{task_id}.log", media_type="text/plain")
 
 
-@router.post("/api/tasks/{task_id}/stop")
+@router.post("/tasks/{task_id}/stop")
 async def stop_task(task_id: str) -> dict:
     with TASK_LOCK:
         task = TASKS.get(task_id)

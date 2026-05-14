@@ -31,7 +31,7 @@ class GenerateIpRequest(BaseModel):
     force_regenerate: bool = False
 
 
-@router.post("/api/ip/generate")
+@router.post("/ip/generate")
 async def generate_ip(req: GenerateIpRequest) -> dict:
     project_dir = _resolve_project_dir(req.project_dir)
     if not os.path.isdir(project_dir):
@@ -59,14 +59,14 @@ async def generate_ip(req: GenerateIpRequest) -> dict:
     return {"ok": True, "task": _ip_task_to_dict(task), "queue_position": queue_position}
 
 
-@router.get("/api/ip/tasks")
+@router.get("/ip/tasks")
 async def list_ip_tasks() -> dict:
     with TASK_LOCK:
         tasks = sorted(IP_TASKS.values(), key=lambda x: x.created_at, reverse=True)
         return {"tasks": [_ip_task_to_dict(t) for t in tasks]}
 
 
-@router.get("/api/ip/tasks/{task_id}")
+@router.get("/ip/tasks/{task_id}")
 async def get_ip_task(task_id: str) -> dict:
     with TASK_LOCK:
         task = IP_TASKS.get(task_id)

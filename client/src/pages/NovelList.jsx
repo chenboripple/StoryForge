@@ -21,6 +21,7 @@ import {
 } from "@ant-design/icons";
 
 import { api, labels } from "../api/client";
+import { extractSummary, extractWordCount } from "../utils/novelSummary";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -131,13 +132,21 @@ export default function NovelList() {
                       {n.novel_title || "未命名"}
                     </Title>
 
+                    {/* 摘要 */}
                     <Paragraph
                       ellipsis={{ rows: 2 }}
                       type="secondary"
-                      style={{ marginBottom: 8 }}
+                      style={{ marginBottom: 4 }}
                     >
-                      {n.concept || "暂无描述"}
+                      {extractSummary(n.concept)}
                     </Paragraph>
+
+                    {/* 字数信息 */}
+                    {extractWordCount(n.concept) && (
+                      <Text type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+                        规划字数：{extractWordCount(n.concept)}
+                      </Text>
+                    )}
 
                     <Progress
                       percent={pct}

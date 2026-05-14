@@ -37,7 +37,7 @@ class SaveImportedRequest(BaseModel):
     chapters: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-@router.get("/api/import/formats")
+@router.get("/import/formats")
 async def list_import_formats() -> dict:
     """列出支持的导入格式。"""
     from core.config import ALLOWED_UPLOAD_TYPES
@@ -71,7 +71,7 @@ async def list_import_formats() -> dict:
     }
 
 
-@router.post("/api/import/upload")
+@router.post("/import/upload")
 async def upload_file(
     file: UploadFile = File(...),
     chapter_pattern: Optional[str] = Form(None),
@@ -196,7 +196,7 @@ async def upload_file(
             pass
 
 
-@router.post("/api/import/save")
+@router.post("/import/save")
 async def save_imported(
     req: SaveImportedRequest,
     sm: StorageManager = Depends(get_storage_manager_dep),

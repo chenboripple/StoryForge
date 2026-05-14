@@ -26,7 +26,7 @@ class CreateNovelRequest(BaseModel):
     target_word_count: int = 3000
 
 
-@router.get("/api/novels")
+@router.get("/novels")
 async def list_novels(
     project_dir: Optional[str] = Query(None, description="项目目录（console模式可选）"),
     sm: StorageManager = Depends(get_storage_manager_dep),
@@ -41,7 +41,7 @@ async def list_novels(
     return {"novels": _discover_novels(project_dir, sm)}
 
 
-@router.post("/api/novels")
+@router.post("/novels")
 async def create_novel(
     req: CreateNovelRequest,
     sm: StorageManager = Depends(get_storage_manager_dep),
@@ -68,7 +68,7 @@ async def create_novel(
     return {"success": True, "novel_id": novel_id, "novel_title": meta.novel_title}
 
 
-@router.get("/api/novels/{novel_id}")
+@router.get("/novels/{novel_id}")
 async def get_novel(
     novel_id: str,
     sm: StorageManager = Depends(get_storage_manager_dep),
@@ -108,7 +108,7 @@ async def get_novel(
     return result
 
 
-@router.get("/api/novels/{novel_id}/chapters")
+@router.get("/novels/{novel_id}/chapters")
 async def list_chapters(
     novel_id: str,
     sm: StorageManager = Depends(get_storage_manager_dep),
@@ -146,7 +146,7 @@ async def list_chapters(
     }
 
 
-@router.get("/api/novels/{novel_id}/chapters/{chapter_num}")
+@router.get("/novels/{novel_id}/chapters/{chapter_num}")
 async def get_chapter(
     novel_id: str,
     chapter_num: int,
@@ -178,7 +178,7 @@ async def get_chapter(
     }
 
 
-@router.get("/api/novels/{novel_id}/characters")
+@router.get("/novels/{novel_id}/characters")
 async def list_novel_characters(
     novel_id: str,
     project_dir: str = Query(..., description="项目目录"),

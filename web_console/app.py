@@ -33,8 +33,6 @@ async def lifespan(app: FastAPI):
     registry = TaskRegistry(storage_dir)
 
     # 注册默认的 pipeline runner
-    from web_console.runtime.registry import TaskRegistry
-
     def run_task(task_id: str):
         registry._run_task(task_id)
 

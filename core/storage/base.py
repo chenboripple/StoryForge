@@ -14,7 +14,7 @@ from core.models.base import BaseModel
 T = TypeVar('T', bound='BaseModel')
 
 # 安全验证相关
-SAFE_NOVEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+SAFE_NOVEL_ID_PATTERN = re.compile(r"^[^\\/:*?\"<>|\x00-\x1F\x7F]+$")
 MAX_NOVEL_ID_LENGTH = 100
 
 
@@ -34,11 +34,19 @@ def _safe_novel_id(novel_id: str) -> str:
     if not novel_id or not isinstance(novel_id, str):
         raise ValueError("小说 ID 不能为空")
 
-    # 移除任何路径分隔符
+    # 移除任何路径分隔符和无效字符
     cleaned = novel_id.strip()
     cleaned = cleaned.replace("/", "_")
     cleaned = cleaned.replace("\\", "_")
     cleaned = cleaned.replace("..", "_")
+    # 移除其他 Windows 文件名非法字符
+    cleaned = cleaned.replace(":", "_")
+    cleaned = cleaned.replace("*", "_")
+    cleaned = cleaned.replace("?", "_")
+    cleaned = cleaned.replace('"', "_")
+    cleaned = cleaned.replace("<", "_")
+    cleaned = cleaned.replace(">", "_")
+    cleaned = cleaned.replace("|", "_")
 
     # 如果结果为空，生成一个安全的 ID
     if not cleaned:
@@ -50,10 +58,8 @@ def _safe_novel_id(novel_id: str) -> str:
     if len(cleaned) > MAX_NOVEL_ID_LENGTH:
         cleaned = cleaned[:MAX_NOVEL_ID_LENGTH]
 
-    # 最终安全检查 - 确保只包含安全字符
-    if not SAFE_NOVEL_ID_PATTERN.match(cleaned):
-        # 替换所有不安全字符
-        cleaned = re.sub(r"[^a-zA-Z0-9_-]", "_", cleaned)
+    # 移除控制字符
+    cleaned = re.sub(r"[\x00-\x1F\x7F]", "_", cleaned)
 
     return cleaned
 

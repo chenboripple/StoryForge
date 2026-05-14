@@ -19,7 +19,7 @@ from web_console.runtime.queue import (
 router = APIRouter()
 
 
-@router.get("/api/config")
+@router.get("/config")
 async def get_console_config() -> dict:
     cfg = get_app_config_dep()
     return {
@@ -30,7 +30,7 @@ async def get_console_config() -> dict:
     }
 
 
-@router.get("/api/health")
+@router.get("/health")
 async def api_health(cfg=Depends(get_app_config_dep)) -> dict:
     return {
         "status": "ok",

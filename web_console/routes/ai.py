@@ -19,7 +19,7 @@ class AiGenerateRequest(BaseModel):
     temperature: float = 0.7
 
 
-@router.post("/api/ai/generate")
+@router.post("/ai/generate")
 async def ai_generate(req: AiGenerateRequest) -> dict:
     payload = GenerationRequest(
         prompt=req.prompt,
