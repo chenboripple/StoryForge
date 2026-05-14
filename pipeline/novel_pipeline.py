@@ -1,6 +1,6 @@
 """
 StoryForge - Pipeline
-大纲细化 → 写作 → 审稿 → 修订 → 校对 → 萃取 → IP 生成
+卷纲规划 → 章纲规划 → 写作 → 审稿 → 修订 → 校对 → 反馈反哺 → 萃取 → IP 生成
 """
 
 from langgraph.graph import StateGraph, END
@@ -29,6 +29,7 @@ from agents.creation_agents import (
 from stages.extraction.knowledge_extractor import KnowledgeExtractor
 from stages.ip_generation.ip_generator import IPGenerator
 from stages.outline.outline_generator import OutlineGenerator
+from stages.outline.progressive_planner import ProgressivePlanner
 from stages.video_script.video_script_generator import VideoScriptGenerator
 from stages.video_bible.visual_bible_builder import VisualBibleBuilder
 from stages.video_assets.video_asset_generator import VideoAssetGenerator
@@ -40,6 +41,7 @@ from core.video import (
     VideoConsistencyService,
 )
 from core.models.video_assets import VideoState
+from core.proposal_manager import ProposalManager
 
 # 使用单一状态模型，避免 PipelineState 与 NovelState 漂移。
 PipelineState = NovelState
@@ -86,6 +88,7 @@ class NovelPipeline:
         self.memory: Optional[StoryMemory] = None
         self.prompt_assembler: Optional[PromptAssembler] = None
         self.outline_generator: Optional[OutlineGenerator] = None
+        self.progressive_planner: Optional[ProgressivePlanner] = None
         self.knowledge_extractor: Optional[KnowledgeExtractor] = None
         self.ip_generator: Optional[IPGenerator] = None
         self.video_script_generator: Optional[VideoScriptGenerator] = None
@@ -93,6 +96,7 @@ class NovelPipeline:
         self.video_asset_generator: Optional[VideoAssetGenerator] = None
         self.video_generator: Optional[VideoGenerator] = None
         self.video_consistency_service: Optional[VideoConsistencyService] = None
+        self.proposal_manager: Optional[ProposalManager] = None
         self.error_handler: Optional[ErrorHandler] = None
         self.message_bus: Optional[MessageBus] = None
         self.workflow = None
@@ -110,7 +114,9 @@ class NovelPipeline:
 
         self.prompt_assembler = PromptAssembler()
         self.outline_generator = OutlineGenerator(self.llm_client)
+        self.progressive_planner = ProgressivePlanner(self.llm_client)
         self.error_handler = ErrorHandler()
+        self.proposal_manager = ProposalManager()
 
         if self.use_message_bus:
             self.message_bus = MessageBus()
@@ -173,13 +179,14 @@ class NovelPipeline:
 
         workflow = StateGraph(NovelState)
 
-        if self.use_outline_refinement:
-            workflow.add_node("outline_refiner", self._outline_refiner)
+        workflow.add_node("volume_planner", self._volume_planner)
+        workflow.add_node("chapter_planner", self._chapter_planner)
 
         workflow.add_node("writer", self._wrap_agent_invoke(self._writer_agent, "writer"))
         workflow.add_node("reviewer", self._wrap_agent_invoke(self._reviewer_agent, "reviewer"))
         workflow.add_node("reviser", self._wrap_agent_invoke(self._reviser_agent, "reviser"))
         workflow.add_node("proofreader", self._wrap_agent_invoke(self._proofreader_agent, "proofreader"))
+        workflow.add_node("feedback_synthesizer", self._feedback_synthesizer)
         workflow.add_node("knowledge_extractor", self._knowledge_extractor)
         workflow.add_node("ip_designer", self._ip_designer)
         workflow.add_node("video_script", self._video_script)
@@ -189,10 +196,12 @@ class NovelPipeline:
         workflow.add_node("video_generate", self._video_generate)
 
         if self.use_outline_refinement:
-            workflow.set_entry_point("outline_refiner")
-            workflow.add_edge("outline_refiner", "writer")
+            workflow.set_entry_point("volume_planner")
+            workflow.add_edge("volume_planner", "chapter_planner")
         else:
-            workflow.set_entry_point("writer")
+            workflow.set_entry_point("chapter_planner")
+
+        workflow.add_edge("chapter_planner", "writer")
 
         workflow.add_edge("writer", "reviewer")
 
@@ -202,7 +211,7 @@ class NovelPipeline:
             {
                 "approve": "proofreader",
                 "revise": "reviser",
-                "rewrite": "writer",
+                "rewrite": "chapter_planner",
                 "max_retries": "proofreader"
             }
         )
@@ -213,10 +222,12 @@ class NovelPipeline:
             "proofreader",
             self._proofread_router,
             {
-                "pass": "knowledge_extractor",
+                "pass": "feedback_synthesizer",
                 "fail": "reviser"
             }
         )
+
+        workflow.add_edge("feedback_synthesizer", "knowledge_extractor")
 
         workflow.add_edge("knowledge_extractor", "ip_designer")
 
@@ -244,6 +255,116 @@ class NovelPipeline:
 
         self.workflow = workflow.compile()
 
+    def _volume_planner(self, state: NovelState) -> NovelState:
+        """卷纲规划：按当前章节所属卷生成/更新 volume brief。"""
+        if not self.progressive_planner:
+            return state
+
+        volume_id = ((state.current_chapter - 1) // 10) + 1
+        existing = state.volume_briefs.get(volume_id)
+        brief = self.progressive_planner.generate_volume_brief(
+            book_outline=state.outline,
+            volume_id=volume_id,
+            current_chapter=state.current_chapter,
+            existing_brief=existing,
+        )
+        state.volume_briefs[volume_id] = brief
+        if isinstance(state.volume_outline, dict):
+            state.volume_outline[volume_id] = brief.get("summary", "")
+        if isinstance(state.creation, dict):
+            state.creation["volume_briefs"] = state.volume_briefs
+        return state
+
+    def _chapter_planner(self, state: NovelState) -> NovelState:
+        """章节规划：基于卷纲和邻章概述生成当前章 chapter brief。"""
+        if not self.progressive_planner:
+            return state
+
+        chapter = state.current_chapter
+        volume_id = ((chapter - 1) // 10) + 1
+        volume_brief = state.volume_briefs.get(volume_id, {})
+
+        neighbors = []
+        for c in [chapter - 2, chapter - 1, chapter + 1, chapter + 2]:
+            if c <= 0:
+                continue
+            brief = state.get_chapter_brief(c)
+            if brief:
+                neighbors.append({"chapter": c, "brief": brief})
+
+        brief = self.progressive_planner.generate_chapter_brief(
+            book_outline=state.outline,
+            volume_brief=volume_brief,
+            chapter_id=chapter,
+            target_words=state.target_word_count,
+            neighbors=neighbors,
+        )
+        state.set_chapter_brief(chapter, brief)
+        return state
+
+    def _feedback_synthesizer(self, state: NovelState) -> NovelState:
+        """将审稿/校对反馈反哺到 chapter brief，并生成跨层提案。"""
+        chapter = state.current_chapter
+        summary_parts: List[str] = []
+        issue_items: List[Dict[str, Any]] = []
+
+        if chapter in state.structured_reviews and state.structured_reviews[chapter]:
+            latest_review = state.structured_reviews[chapter][-1]
+            if hasattr(latest_review, "summary"):
+                summary_parts.append(str(getattr(latest_review, "summary", "")))
+            for issue in getattr(latest_review, "issues", []) or []:
+                issue_items.append({
+                    "severity": getattr(issue, "severity", ""),
+                    "location": getattr(issue, "location", ""),
+                    "description": getattr(issue, "description", ""),
+                    "suggestion": getattr(issue, "suggestion", ""),
+                })
+
+        if chapter in state.proofread_results and state.proofread_results[chapter]:
+            latest_pf = state.proofread_results[chapter][-1]
+            summary_parts.append(str(getattr(latest_pf, "summary", "")))
+            for issue in getattr(latest_pf, "issues", []) or []:
+                issue_items.append({
+                    "severity": getattr(issue, "severity", ""),
+                    "location": getattr(issue, "location", ""),
+                    "description": getattr(issue, "explanation", ""),
+                    "suggestion": getattr(issue, "correction", ""),
+                    "type": getattr(issue, "issue_type", ""),
+                })
+
+        summary_text = "\n".join([s for s in summary_parts if s])[:800]
+        state.update_chapter_brief_from_feedback(
+            chapter=chapter,
+            summary=summary_text,
+            issues=issue_items,
+        )
+
+        # 跨层提案：严重设定类问题不直接改高层，先入 proposal。
+        severe = [i for i in issue_items if str(i.get("severity", "")).upper() in {"S", "A", "CRITICAL"}]
+        if severe:
+            setting_related = [
+                i for i in severe
+                if any(k in (str(i.get("description", "")) + str(i.get("type", ""))).lower()
+                       for k in ["设定", "时间线", "timeline", "world", "角色", "character"])
+            ]
+            if setting_related:
+                state.add_proposal(
+                    target_layer="volume_or_world",
+                    reason="章节评估发现高风险跨层冲突，需规划层确认",
+                    diff={
+                        "chapter": chapter,
+                        "issues": setting_related[:5],
+                    },
+                    chapter=chapter,
+                    confidence=0.82,
+                    risk_level="high",
+                )
+
+                if self.proposal_manager:
+                    self.proposal_manager.review_pending(state)
+
+        return state
+
     def _wrap_agent_invoke(self, agent, node_name: str):
         """包装 Agent.invoke（当前 Agents 仍使用旧 NovelState，后续逐步迁移）"""
         def invoke(state: NovelState) -> NovelState:
@@ -264,47 +385,9 @@ class NovelPipeline:
         return invoke
 
     def _outline_refiner(self, state: NovelState) -> NovelState:
-        """大纲细化阶段：生成章级细纲"""
-        print(f"📝 大纲细化阶段：第{state.current_chapter}章")
-
-        sm = get_storage_manager()
-        meta = sm.load_novel_meta(state.novel_id)
-        outline = sm.load_outline(state.novel_id)
-
-        if not meta:
-            print(f"  ⚠️ 小说不存在: {state.novel_id}")
-            state.error_message = f"小说不存在: {state.novel_id}"
-            return state
-
-        if not self.outline_generator or not meta.novel_title:
-            print(f"  ⚠️ 跳过细纲生成")
-            return state
-
-        try:
-            from core.models.outline import ChapterOutline
-            chapter_outline = self.outline_generator.generate_chapter_outline(
-                novel_title=meta.novel_title,
-                volume_outline=getattr(outline, 'volumes', {}).get((state.current_chapter-1)//10, ''),
-                current_chapter=state.current_chapter,
-                characters=None,
-                target_words=meta.target_word_count
-            )
-
-            if not outline:
-                from core.models.outline import Outline
-                outline = Outline(novel_id=state.novel_id)
-
-            if not hasattr(outline, 'chapter_outlines'):
-                outline.chapter_outlines = {}
-            outline.chapter_outlines[state.current_chapter] = chapter_outline
-            sm.save_outline(state.novel_id, outline)
-
-            print(f"  ✅ 第{state.current_chapter}章细纲生成完成")
-
-        except Exception as e:
-            print(f"  ❌ 细纲生成失败：{e}")
-            state.error_message = f"大纲细化失败：{str(e)}"
-
+        """兼容旧节点名：转发到新的分层规划。"""
+        state = self._volume_planner(state)
+        state = self._chapter_planner(state)
         return state
 
     def _review_router(self, state: NovelState) -> str:
@@ -616,6 +699,11 @@ class NovelPipeline:
             "error_message": state.error_message,
             "should_pause": state.should_pause,
             "last_node": node_name,
+            "chapter_briefs": state.chapter_briefs,
+            "volume_briefs": state.volume_briefs,
+            "context_decisions": state.context_decisions,
+            "proposals": state.proposals,
+            "canonical_versions": state.canonical_versions,
         }
         try:
             with open(checkpoint_path, 'w', encoding='utf-8') as f:
@@ -647,6 +735,15 @@ class NovelPipeline:
                     state.review_round = data.get('review_round', 0)
                     state.error_message = data.get('error_message', '')
                     state.last_node = data.get('last_node', '')
+                    state.chapter_briefs = {
+                        int(k): v for k, v in (data.get('chapter_briefs', {}) or {}).items()
+                    }
+                    state.volume_briefs = {
+                        int(k): v for k, v in (data.get('volume_briefs', {}) or {}).items()
+                    }
+                    state.context_decisions = list(data.get('context_decisions', []) or [])
+                    state.proposals = list(data.get('proposals', []) or [])
+                    state.canonical_versions = dict(data.get('canonical_versions', {}) or state.canonical_versions)
             except Exception as e:
                 print(f"⚠️ 加载 pipeline 检查点失败: {e}")
 
@@ -667,11 +764,14 @@ class NovelPipeline:
 
         current_state = state
         node_map = {
+            "volume_planner": self._volume_planner,
+            "chapter_planner": self._chapter_planner,
             "outline_refiner": self._outline_refiner,
             "writer": lambda s: self._writer_agent.invoke(s) if self._writer_agent else s,
             "reviewer": lambda s: self._reviewer_agent.invoke(s) if self._reviewer_agent else s,
             "reviser": lambda s: self._reviser_agent.invoke(s) if self._reviser_agent else s,
             "proofreader": lambda s: self._proofreader_agent.invoke(s) if self._proofreader_agent else s,
+            "feedback_synthesizer": self._feedback_synthesizer,
             "knowledge_extractor": self._knowledge_extractor,
             "ip_designer": self._ip_designer,
             "video_script": self._video_script,

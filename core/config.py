@@ -58,9 +58,14 @@ class StorageConfig:
 
 @dataclass
 class ServerConfig:
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8787
-    cors_origins: Optional[List[str]] = None  # None 表示允许所有（旧行为），或者列表如 ["http://localhost:3000"]
+    cors_origins: Optional[List[str]] = field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+    )
     cors_allow_credentials: bool = False
     debug: bool = False
 

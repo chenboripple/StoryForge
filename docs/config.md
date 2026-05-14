@@ -33,9 +33,12 @@ storage:
     data_dir: ~/.storyforge/data
 
 server:
-    host: 0.0.0.0
+    host: 127.0.0.1
     port: 8787
-    cors_origins: "*"
+    cors_origins:
+        - "http://localhost:3000"
+        - "http://127.0.0.1:3000"
+    cors_allow_credentials: false
     debug: false
 
 pipeline:
@@ -45,7 +48,7 @@ pipeline:
 console:
     max_running_tasks: 3
     default_command: "python examples/demo_pipeline.py"
-    template_file: "~/.storyforge/templates.json"
+    template_file: "~/.storyforge/templates.yaml"
 
 debug:
     output_dir: "debug_output"
@@ -164,10 +167,11 @@ llm:
 
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
-| `server.host` | 监听地址 | `0.0.0.0` |
+| `server.host` | 监听地址 | `127.0.0.1` |
 | `server.port` | 端口 | `8787` |
-| `server.cors_origins` | 允许跨域的源 | `"*"` |
-| `server.debug` | Flask debug 开关 | `false` |
+| `server.cors_origins` | 允许跨域的源（默认仅本地前端） | `["http://localhost:3000", "http://127.0.0.1:3000"]` |
+| `server.cors_allow_credentials` | CORS 是否允许携带凭据 | `false` |
+| `server.debug` | 服务调试开关（影响错误详情暴露） | `false` |
 
 ---
 

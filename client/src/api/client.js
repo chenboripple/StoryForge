@@ -1,7 +1,9 @@
 // API 客户端
 //
-// 开发模式下 CRA 通过 package.json 中的 "proxy" 字段把 /api/* 转发到 Flask。
-// 生产模式下，Flask 直接服务 client/build。
+// 开发模式下 CRA 通过 package.json 中的 "proxy" 字段把 /api/* 转发到后端。
+// 生产模式下，后端直接服务 client/build。
+
+const API_BASE = "/api/v1";
 
 const STAGE_LABELS = {
   creation: "创作中",
@@ -39,23 +41,24 @@ async function request(path, options) {
 }
 
 export const api = {
-  listNovels: () => request("/api/novels"),
+  listNovels: () => request(`${API_BASE}/novels`),
   createNovel: (data) =>
-    request("/api/novels", {
+    request(`${API_BASE}/novels`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
-  getNovel: (novelId) => request(`/api/novels/${encodeURIComponent(novelId)}`),
+  getNovel: (novelId) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}`),
   listChapters: (novelId) =>
-    request(`/api/novels/${encodeURIComponent(novelId)}/chapters`),
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters`),
   getChapter: (novelId, chapterNum) =>
     request(
-      `/api/novels/${encodeURIComponent(novelId)}/chapters/${chapterNum}`
+      `${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters/${chapterNum}`
     ),
-  listImportFormats: () => request("/api/import/formats"),
+  listImportFormats: () => request(`${API_BASE}/import/formats`),
   uploadFile: (formData) =>
-    fetch("/api/import/upload", {
+    fetch(`${API_BASE}/import/upload`, {
       method: "POST",
       body: formData,
     }).then((res) => {
@@ -63,7 +66,7 @@ export const api = {
       return res.json();
     }),
   saveImported: (data) =>
-    fetch("/api/import/save", {
+    fetch(`${API_BASE}/import/save`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),

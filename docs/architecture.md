@@ -9,9 +9,8 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │                         Web 前端层                                   │
 ├─────────────────────────────────────────────────────────────────────┤
 │  web_console/  (FastAPI, 端口 8787)                                 │
-│  - routes/   按领域分组的 APIRouter（health/tasks/templates/novels/ │
-│              import/ip/video/ai）                                   │
-│  - routes/v1/ 版本化 API（/api/v1/）                                │
+│  - routes/v1/ 仅保留 v1 APIRouter（/api/v1/）                       │
+│  - routes/__init__.py 路由聚合入口（v1-only）                        │
 │  - services/ 业务实现（ip / video / vector / novels）               │
 │  - runtime/  TaskRegistry（任务队列、状态持久化）、模板白名单       │
 │  - middleware/ 统一错误处理、请求 ID、CORS                          │
@@ -79,9 +78,9 @@ storage:
     data_dir: ~/.storyforge/data
 
 server:
-    host: 0.0.0.0
+    host: 127.0.0.1
     port: 8787
-    cors_origins: ["*"]  # 允许的源列表
+    cors_origins: ["http://localhost:3000", "http://127.0.0.1:3000"]
     cors_allow_credentials: false
     debug: false
 
@@ -96,7 +95,7 @@ pipeline:
 console:
     max_running_tasks: 3
     default_command: python examples/demo_pipeline.py
-    template_file: ~/.storyforge/templates.json
+    template_file: ~/.storyforge/templates.yaml
 
 debug:
     output_dir: debug_output
@@ -121,7 +120,7 @@ debug:
 - `task_queue` - 任务队列
 - `task_runners` - 任务执行器注册表
 
-**向后兼容**：`web_console/runtime/queue.py` 作为兼容层，旧代码可以继续使用全局变量。
+任务运行时统一由 `web_console/runtime/registry.py` 的 `TaskRegistry` 承载，API 层通过依赖注入访问。
 
 ## 中间件与错误处理
 
@@ -136,10 +135,11 @@ debug:
   - `/api/v1/novels`
   - `/api/v1/tasks`
   - `/api/v1/import`
-  - `/api/v1/ip`
-  - `/api/v1/video`
+    - `/api/v1/ip/{novel_id}/...`
+    - `/api/v1/video/{novel_id}/...`
 
-- **旧版 API**：`/api/` 前缀（保持向后兼容）
+- 当前仅保留 **v1 API**，不再维护 `/api/` 旧前缀兼容层。
+- `/api/*`（非 `/api/v1/*`）统一返回 `410 Gone`，用于明确迁移信号。
 
 ## 设计原则
 

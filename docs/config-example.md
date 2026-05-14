@@ -65,9 +65,12 @@ storage:
 
 # ==================== 服务器配置 ====================
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8787
-  cors_origins: "*"
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://127.0.0.1:3000"
+  cors_allow_credentials: false
   debug: false
 
 # ==================== Pipeline 配置 ====================

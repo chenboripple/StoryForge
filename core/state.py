@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 from enum import Enum
 import copy
+import uuid
 
 from core.config import get_config
 from core.models.chapter import ChapterStatus
@@ -92,6 +93,8 @@ class NovelState:
     concept: str = ""
     outline: str = ""
     volume_outline: Dict[int, str] = field(default_factory=dict)
+    volume_briefs: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    chapter_briefs: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     characters: List[CharacterInfo] = field(default_factory=list)
 
     # 章节与审稿（单一真源：creation['chapters']）
@@ -138,6 +141,23 @@ class NovelState:
     agent_messages: List[Dict] = field(default_factory=list)  # MessageBus 消息日志
     routing_suggestions: List[Dict] = field(default_factory=list)  # Agent 路由建议
 
+    # 渐进式披露：预算、决策日志、提案
+    context_budgets: Dict[str, int] = field(default_factory=lambda: {
+        "writer": 12000,
+        "reviewer": 14000,
+        "reviser": 14000,
+        "proofreader": 14000,
+    })
+    context_decisions: List[Dict[str, Any]] = field(default_factory=list)
+    proposals: List[Dict[str, Any]] = field(default_factory=list)
+    canonical_versions: Dict[str, int] = field(default_factory=lambda: {
+        "outline": 1,
+        "volume_briefs": 1,
+        "chapter_briefs": 1,
+        "character_profiles": 1,
+        "world_rules": 1,
+    })
+
     # 控制字段
     error_message: str = ""
     human_feedback: Optional[str] = None
@@ -159,6 +179,16 @@ class NovelState:
             self.creation.setdefault("chapter_outlines", {})
             self.creation.setdefault("chapter_summaries", {})
             self.creation.setdefault("extraction_notes", {})
+            self.creation.setdefault("volume_briefs", {})
+
+        # 快速迁移：chapter_outlines 作为 chapter_briefs 初始来源
+        if not self.chapter_briefs and isinstance(self.creation, dict):
+            outlines = self.creation.get("chapter_outlines", {})
+            if isinstance(outlines, dict):
+                self.chapter_briefs = {
+                    int(k): v for k, v in outlines.items()
+                    if isinstance(v, dict)
+                }
 
     def get_current_chapter_status(self) -> ChapterStatus:
         """获取当前章节状态"""
@@ -218,6 +248,12 @@ class NovelState:
 
         if "volume_outline" in filtered and isinstance(filtered["volume_outline"], dict):
             filtered["volume_outline"] = {int(k): v for k, v in filtered["volume_outline"].items()}
+
+        if "volume_briefs" in filtered and isinstance(filtered["volume_briefs"], dict):
+            filtered["volume_briefs"] = {int(k): v for k, v in filtered["volume_briefs"].items()}
+
+        if "chapter_briefs" in filtered and isinstance(filtered["chapter_briefs"], dict):
+            filtered["chapter_briefs"] = {int(k): v for k, v in filtered["chapter_briefs"].items()}
 
         if "reviews" in filtered and isinstance(filtered["reviews"], dict):
             filtered["reviews"] = {
@@ -286,6 +322,120 @@ class NovelState:
             "timestamp": datetime.now().isoformat()
         })
 
+    def get_chapter_brief(self, chapter: Optional[int] = None) -> Dict[str, Any]:
+        """获取章节概述。"""
+        chapter = chapter or self.current_chapter
+        return self.chapter_briefs.get(chapter, {})
+
+    def set_chapter_brief(self, chapter: int, brief: Dict[str, Any]):
+        """写入章节概述，并同步到 creation.chapter_outlines。"""
+        if not isinstance(brief, dict):
+            return
+
+        base = {
+            "chapter_id": chapter,
+            "title": f"第{chapter}章",
+            "theme": "",
+            "plot": "",
+            "scenes": [],
+            "hooks": [],
+            "characters_involved": [],
+            "words_target": self.target_word_count,
+        }
+        base.update(brief)
+        self.chapter_briefs[chapter] = base
+
+        if isinstance(self.creation, dict):
+            outlines = self.creation.setdefault("chapter_outlines", {})
+            outlines[chapter] = base
+
+    def update_chapter_brief_from_feedback(
+        self,
+        chapter: Optional[int],
+        summary: str,
+        issues: Optional[List[Dict[str, Any]]] = None,
+    ):
+        """将评审反馈回写到 chapter brief。"""
+        chapter = chapter or self.current_chapter
+        brief = self.get_chapter_brief(chapter).copy()
+        if not brief:
+            brief = {
+                "chapter_id": chapter,
+                "title": f"第{chapter}章",
+                "words_target": self.target_word_count,
+            }
+
+        issues = issues or []
+        revision_focus = []
+        for issue in issues:
+            severity = str(issue.get("severity", "")).upper()
+            if severity in {"S", "A", "CRITICAL"}:
+                desc = issue.get("description") or issue.get("explanation") or ""
+                if desc:
+                    revision_focus.append(desc[:180])
+
+        feedback_entry = {
+            "summary": summary,
+            "issues": issues[:8],
+        }
+
+        history = list(brief.get("feedback_history", []))
+        history.append(feedback_entry)
+        brief["feedback_history"] = history[-8:]
+
+        if revision_focus:
+            brief["revision_focus"] = revision_focus[:8]
+
+        self.set_chapter_brief(chapter, brief)
+
+    def add_proposal(
+        self,
+        target_layer: str,
+        reason: str,
+        diff: Dict[str, Any],
+        chapter: Optional[int] = None,
+        confidence: float = 0.7,
+        risk_level: str = "medium",
+    ) -> str:
+        """创建跨层提案，返回 proposal_id。"""
+        from datetime import datetime
+
+        proposal_id = f"proposal_{uuid.uuid4().hex[:12]}"
+        self.proposals.append({
+            "proposal_id": proposal_id,
+            "target_layer": target_layer,
+            "chapter": chapter or self.current_chapter,
+            "reason": reason,
+            "diff": diff,
+            "confidence": confidence,
+            "risk_level": risk_level,
+            "status": "pending",
+            "timestamp": datetime.now().isoformat(),
+        })
+        return proposal_id
+
+    def record_context_decision(
+        self,
+        agent: str,
+        chapter: int,
+        loaded_sections: List[str],
+        escalated: bool,
+        budget: int,
+        used_chars: int,
+    ):
+        """记录上下文装载决策。"""
+        from datetime import datetime
+
+        self.context_decisions.append({
+            "agent": agent,
+            "chapter": chapter,
+            "loaded_sections": loaded_sections,
+            "escalated": escalated,
+            "budget": budget,
+            "used_chars": used_chars,
+            "timestamp": datetime.now().isoformat(),
+        })
+
     def to_dict(self) -> dict:
         """序列化为字典（JSON 友好），用于存储与 API 输出"""
         return {
@@ -299,6 +449,8 @@ class NovelState:
             "concept": self.concept,
             "outline": self.outline,
             "volume_outline": {str(k): v for k, v in self.volume_outline.items()},
+            "volume_briefs": {str(k): v for k, v in self.volume_briefs.items()},
+            "chapter_briefs": {str(k): v for k, v in self.chapter_briefs.items()},
             "characters": [
                 {
                     "name": c.name,
@@ -355,6 +507,10 @@ class NovelState:
             # Agent 间消息与路由
             "agent_messages": self.agent_messages,
             "routing_suggestions": self.routing_suggestions,
+            "context_budgets": self.context_budgets,
+            "context_decisions": self.context_decisions,
+            "proposals": self.proposals,
+            "canonical_versions": self.canonical_versions,
             # 控制
             "error_message": self.error_message,
             "human_feedback": self.human_feedback,

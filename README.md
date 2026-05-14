@@ -184,7 +184,7 @@ StoryForge/
 ├── client/                 # React 前端
 ├── web_console/            # FastAPI 后端
 │   ├── app.py              # 应用入口 + 生命周期管理
-│   ├── routes/             # API 路由（含 /api/v1/ 版本化）
+│   ├── routes/             # API 路由聚合（v1-only）
 │   ├── services/           # 业务逻辑
 │   ├── runtime/            # TaskRegistry 任务管理
 │   └── middleware/         # 中间件

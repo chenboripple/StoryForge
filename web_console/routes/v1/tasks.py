@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +19,7 @@ from web_console.runtime.models import (
     _task_to_dict,
 )
 from web_console.runtime.registry import TaskRegistry
+from web_console.runtime.templates import _assert_command_allowed
 from web_console.utils import _now, _resolve_project_dir
 
 router = APIRouter(tags=["tasks"])
@@ -34,6 +36,17 @@ class StartTaskRequest(BaseModel):
 
 class StopTaskRequest(BaseModel):
     task_id: str
+
+
+def _validate_task_project_dir(project_dir: str) -> str:
+    """任务执行目录约束：必须存在且不能是系统根目录。"""
+    resolved = _resolve_project_dir(project_dir)
+    if not os.path.isdir(resolved):
+        raise HTTPException(status_code=400, detail="project_dir not exist")
+
+    if Path(resolved).resolve() == Path("/"):
+        raise HTTPException(status_code=400, detail="project_dir cannot be filesystem root")
+    return resolved
 
 
 def _refresh_and_get_task(registry: TaskRegistry, task_id: str) -> Optional[TaskRuntime]:
@@ -97,9 +110,8 @@ async def start_task(
         if not req.command:
             raise HTTPException(status_code=400, detail="command required")
 
-        project_dir = _resolve_project_dir(req.project_dir)
-        if not os.path.isdir(project_dir):
-            raise HTTPException(status_code=400, detail="project_dir not exist")
+        project_dir = _validate_task_project_dir(req.project_dir)
+        _assert_command_allowed(project_dir, req.command)
 
         task = TaskRuntime(
             task_id=task_id,
@@ -119,9 +131,11 @@ async def start_task(
         if not req.novel_id:
             raise HTTPException(status_code=400, detail="novel_id required")
 
+        project_dir = _validate_task_project_dir(req.project_dir)
+
         task = IpTaskRuntime(
             task_id=task_id,
-            project_dir=_resolve_project_dir(req.project_dir),
+            project_dir=project_dir,
             novel_id=req.novel_id,
             character_ids=req.character_ids,
             force_regenerate=req.force_regenerate,
