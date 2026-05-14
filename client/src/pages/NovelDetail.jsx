@@ -293,58 +293,104 @@ export default function NovelDetail() {
         )}
       </Card>
 
-      {/* 章节列表 */}
+      {/* 章节列表（按卷分组） */}
       <Card title={`章节 (${total})`}>
         {total === 0 ? (
           <Empty description="还没有章节" />
         ) : (
-          <Collapse accordion>
-            {chapters.map((c) => (
-              <Panel
-                key={c.chapter_num}
-                header={
-                  <Space style={{ width: "100%", justifyContent: "space-between" }}>
-                    <Space>
-                      <Badge
-                        status={
-                          c.status === "approved"
-                            ? "success"
-                            : c.status === "draft"
-                            ? "processing"
-                            : "default"
-                        }
-                      />
-                      <span>第 {c.chapter_num} 章</span>
-                      <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
-                        {c.title || c.preview || "—"}
-                      </Text>
-                    </Space>
-                    <Space>
-                      <Tag color={labels.statusTone(c.status)}>
-                        {labels.status(c.status)}
-                      </Tag>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {c.word_count}字
-                      </Text>
-                    </Space>
-                  </Space>
-                }
-                onClick={() =>
-                  setActiveChapter(
-                    activeChapter === c.chapter_num ? null : c.chapter_num
-                  )
-                }
-              >
-                {activeChapter === c.chapter_num && (
-                  <ChapterDetail
-                    novelId={novelId}
-                    chapterNum={c.chapter_num}
-                    onClose={() => setActiveChapter(null)}
-                  />
-                )}
-              </Panel>
-            ))}
-          </Collapse>
+          (() => {
+            // 按卷分组，每 10 章为一卷（与后端 pipeline 约定一致）
+            const volumeMap = {};
+            chapters.forEach((c) => {
+              const vol = Math.floor((c.chapter_num - 1) / 10) + 1;
+              if (!volumeMap[vol]) volumeMap[vol] = [];
+              volumeMap[vol].push(c);
+            });
+
+            const volumeIds = Object.keys(volumeMap)
+              .map((v) => parseInt(v, 10))
+              .sort((a, b) => a - b);
+
+            return (
+              <Collapse accordion>
+                {volumeIds.map((volId) => {
+                  const vols = volumeMap[volId];
+                  const first = vols[0].chapter_num;
+                  const last = vols[vols.length - 1].chapter_num;
+                  return (
+                    <Panel
+                      key={`vol-${volId}`}
+                      header={
+                        <Space style={{ width: "100%", justifyContent: "space-between" }}>
+                          <Space>
+                            <BookOutlined />
+                            <span>第 {volId} 卷</span>
+                            <Text type="secondary">
+                              （第 {first} 章 - 第 {last} 章，共 {vols.length} 章）
+                            </Text>
+                          </Space>
+                          <Space>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              卷进度: {Math.round((vols.filter((x) => x.status === 'approved').length / vols.length) * 100)}%
+                            </Text>
+                          </Space>
+                        </Space>
+                      }
+                    >
+                      {/* 每个卷内部的章节列表，使用内嵌 Collapse 保持行为一致 */}
+                      <Collapse accordion>
+                        {vols.map((c) => (
+                          <Panel
+                            key={`ch-${c.chapter_num}`}
+                            header={
+                              <Space style={{ width: "100%", justifyContent: "space-between" }}>
+                                <Space>
+                                  <Badge
+                                    status={
+                                      c.status === "approved"
+                                        ? "success"
+                                        : c.status === "draft"
+                                        ? "processing"
+                                        : "default"
+                                    }
+                                  />
+                                  <span>第 {c.chapter_num} 章</span>
+                                  <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+                                    {c.title || c.preview || "—"}
+                                  </Text>
+                                </Space>
+                                <Space>
+                                  <Tag color={labels.statusTone(c.status)}>
+                                    {labels.status(c.status)}
+                                  </Tag>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    {c.word_count}字
+                                  </Text>
+                                </Space>
+                              </Space>
+                            }
+                            onClick={() =>
+                              setActiveChapter(
+                                activeChapter === c.chapter_num ? null : c.chapter_num
+                              )
+                            }
+                          >
+                            {activeChapter === c.chapter_num && (
+                              <ChapterDetail
+                                novelId={novelId}
+                                chapterNum={c.chapter_num}
+                                onClose={() => setActiveChapter(null)}
+                              />
+                            )}
+                          </Panel>
+                        ))}
+                      </Collapse>
+                    </Panel>
+                  );
+                })}
+              </Collapse>
+            );
+          })()
         )}
       </Card>
     </Space>
