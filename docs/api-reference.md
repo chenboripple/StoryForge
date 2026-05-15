@@ -123,6 +123,9 @@ sm.delete_novel(novel_id)
 | `/api/v1/novels/{novel_id}/chapters` | GET | 章节列表 |
 | `/api/v1/novels/{novel_id}/chapters/{chapter_num}` | GET | 章节内容 + 审稿/校对 |
 | `/api/v1/novels/{novel_id}/characters` | GET | 小说角色列表（需 project_dir） |
+| `/api/v1/novels/{novel_id}/characters/{character_id}/visuals` | GET | 角色形象档案（主形象/艺术照/视频立体图） |
+| `/api/v1/novels/{novel_id}/characters/{character_id}/visuals/generate` | POST | 生成角色图片（支持 main/gallery/video） |
+| `/api/v1/novels/{novel_id}/characters/{character_id}/visuals/finalize` | POST | 设置/取消角色形象定稿 |
 | `/api/v1/novels/{novel_id}/proposals` | GET | 渐进式披露提案列表 |
 | `/api/v1/novels/{novel_id}/context-decisions` | GET | 上下文加载决策日志 |
 | `/api/v1/tasks` | GET | 任务列表 |
@@ -202,6 +205,68 @@ sm.delete_novel(novel_id)
 ### `GET /api/v1/novels/{novel_id}/chapters`
 
 返回章节列表（带状态、字数和最新审稿分数）。
+
+### 角色形象端点
+
+#### `GET /api/v1/novels/{novel_id}/characters/{character_id}/visuals`
+
+返回角色形象资料。
+
+**响应**：
+
+```json
+{
+    "novel_id": "demo_001",
+    "character_id": "char_001",
+    "profile": {
+        "character_id": "char_001",
+        "character_name": "林砚",
+        "main_image": null,
+        "gallery_images": [],
+        "video_images": [],
+        "finalized": false
+    }
+}
+```
+
+#### `POST /api/v1/novels/{novel_id}/characters/{character_id}/visuals/generate`
+
+按槽位生成角色图片。
+
+**请求体**：
+
+```json
+{
+    "prompt": "夜景街头，黑色风衣",
+    "slot_type": "gallery",
+    "index": null,
+    "style": "电影感",
+    "image_preset": "1080p",
+    "aspect_ratio": "3:4",
+    "regenerate_all": false
+}
+```
+
+字段说明：
+- `slot_type`: `main | gallery | video`
+- `index`: 可选，重生成某张图片时传入
+- `regenerate_all`: 仅 `video` 生效，为 `true` 时会清空后重生成固定视角组图
+
+流程约束：
+- `gallery` 和 `video` 生成前必须已有 `main_image`
+- `video` 全量重生成时会输出固定视角图片集合
+
+#### `POST /api/v1/novels/{novel_id}/characters/{character_id}/visuals/finalize`
+
+设置角色形象定稿状态。
+
+**请求体**：
+
+```json
+{
+    "finalized": true
+}
+```
 
 ### 任务端点
 

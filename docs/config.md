@@ -2,6 +2,8 @@
 
 StoryForge 使用单一 YAML 配置文件，所有运行配置都从该文件读取。
 
+核心原则：所有 Agent（包含临时创建的 Agent）使用什么模型，都由用户在 `~/.storyforge/storyforge.yaml` 决定。
+
 ---
 
 ## 配置文件 (YAML)
@@ -28,6 +30,80 @@ llm:
     temperature: 0.7
     timeout: 60
     extra: {}
+
+models:
+    - name: writer-main
+      provider: openai
+      model: gpt-4o-mini
+      api_key: ""
+      base_url: ""
+      temperature: 0.8
+      timeout: 60
+      max_tokens: 4096
+      enabled: true
+      cost_per_1k_input: 0.15
+      cost_per_1k_output: 0.60
+      task_preferences:
+          writing: 0.95
+          outline: 0.9
+
+    - name: reviewer-fast
+      provider: anthropic
+      model: claude-3-5-sonnet-latest
+      api_key: ""
+      temperature: 0.3
+      timeout: 45
+      max_tokens: 4096
+      enabled: true
+      task_preferences:
+          review: 0.95
+          extraction: 0.9
+
+model_providers:
+        - name: provider_a
+            provider: anthropic
+            api_key: ""
+            base_url: ""
+            timeout: 60
+
+        - name: provider_b
+            provider: anthropic
+            api_key: ""
+            base_url: ""
+            timeout: 60
+
+# 通过 provider_name 复用 provider 配置，避免重复写 base_url/api_key
+models:
+        - name: writer-main
+            provider_name: provider_a
+            model: gpt-4o-mini
+            temperature: 0.8
+
+        - name: reviewer-fast
+            provider_name: provider_b
+            model: claude-3-5-sonnet-latest
+            temperature: 0.3
+
+model_routing:
+    task_mapping:
+        writing: [writer-main, reviewer-fast]
+        review: [reviewer-fast, writer-main]
+        proofreading: [reviewer-fast, writer-main]
+        extraction: [reviewer-fast, writer-main]
+        outline: [writer-main, reviewer-fast]
+        ip_generation: [writer-main, reviewer-fast]
+        general: [reviewer-fast, writer-main]
+
+    # 可选：固定 Agent 的默认偏好；未配置的 Agent 自动走 task_mapping
+    agent_preferences:
+        墨川: writer-main
+        青锋: reviewer-fast
+
+    # 成功率监控 + 自动降级
+    auto_downgrade: true
+    min_success_rate: 0.6
+    health_min_calls: 5
+    failure_cooldown_sec: 180
 
 storage:
     data_dir: ~/.storyforge/data
@@ -93,6 +169,45 @@ video:
 | `llm.temperature` | 采样温度 | 0.0 - 2.0 | `0.7` |
 | `llm.timeout` | 请求超时（秒） | 正整数 | `60` |
 | `llm.extra` | 透传 SDK 的额外参数 | Dict | `{}` |
+
+说明：`llm` 仍可用于直接 `llm_factory` 场景；当前 `ModelRouter` 实现依赖 `models + model_routing`（及可选 `model_providers`），不自动回退到单 `llm`。
+
+---
+
+### 多模型路由配置 (`models.*` + `model_routing.*`)
+
+| 字段 | 说明 | 是否必填 |
+|------|------|----------|
+| `models` | 预定义模型池（可多个 provider） | 推荐 |
+| `model_providers` | provider 连接配置池（可被多个 model 复用） | 推荐 |
+| `models[].name` | 路由别名（供 task_mapping/agent_preferences 引用） | 是 |
+| `models[].provider_name` | 复用的 provider 配置名（推荐） | 否 |
+| `models[].provider` | `mock/openai/anthropic/azure/local/custom` | 是 |
+| `models[].model` | 真实模型 ID | 是 |
+| `models[].task_preferences` | 任务偏好分（0-1） | 否 |
+| `model_routing.task_mapping` | 每种任务的候选模型优先级列表 | 推荐 |
+| `model_routing.agent_preferences` | 每个 Agent 的默认模型偏好（可选） | 否 |
+| `model_routing.auto_downgrade` | 启用自动降级 | 否 |
+| `model_routing.min_success_rate` | 最低成功率阈值 | 否 |
+| `model_routing.health_min_calls` | 开始应用成功率判断的最小调用数 | 否 |
+| `model_routing.failure_cooldown_sec` | 连续失败后的冷却时长（秒） | 否 |
+
+临时 Agent 说明：
+
+- 临时创建的 Agent 不需要预先定义在 `agent_preferences`。
+- 临时 Agent 可以在运行时传 `preferred_model`，优先级高于 `agent_preferences`。
+- 若未传 `preferred_model`，将按 `task_mapping` 自动路由，并在失败时自动降级。
+
+provider 复用说明：
+
+- 你可以配置“一个 provider 多个 model”，仅在 `model_providers` 写一次 `api_key/base_url`。
+- 也可以配置“多个 provider + 多模型”，每个 model 用 `provider_name` 选择连接来源。
+- 映射层只需要写 model 名（`task_mapping` / `agent_preferences`），无需重复 provider 连接参数。
+
+运行要求：
+
+- 走 `ModelRouter` 路径时，必须存在至少一个可用模型（来自 `models` 顶层定义或 `model_providers[].models` 展开）。
+- 若映射中引用了不存在的模型名，启动路由时会报错。
 
 #### 示例：OpenAI / Azure OpenAI
 

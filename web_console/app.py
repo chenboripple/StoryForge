@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -38,7 +39,9 @@ async def lifespan(app: FastAPI):
     yield  # 应用运行
 
     # 关闭时
-    await app.state.task_registry.shutdown()
+    shutdown_result = app.state.task_registry.shutdown()
+    if inspect.isawaitable(shutdown_result):
+        await shutdown_result
 
 
 # 创建 FastAPI 应用

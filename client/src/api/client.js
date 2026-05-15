@@ -56,6 +56,34 @@ export const api = {
     request(
       `${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters/${chapterNum}`
     ),
+  getCharacterVisuals: (novelId, characterId) =>
+    request(
+      `${API_BASE}/novels/${encodeURIComponent(novelId)}/characters/${encodeURIComponent(
+        characterId
+      )}/visuals`
+    ),
+  generateCharacterVisual: (novelId, characterId, data) =>
+    request(
+      `${API_BASE}/novels/${encodeURIComponent(novelId)}/characters/${encodeURIComponent(
+        characterId
+      )}/visuals/generate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }
+    ),
+  finalizeCharacterVisuals: (novelId, characterId, finalized = true) =>
+    request(
+      `${API_BASE}/novels/${encodeURIComponent(novelId)}/characters/${encodeURIComponent(
+        characterId
+      )}/visuals/finalize`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ finalized }),
+      }
+    ),
   listImportFormats: () => request(`${API_BASE}/import/formats`),
   uploadFile: (formData) =>
     fetch(`${API_BASE}/import/upload`, {

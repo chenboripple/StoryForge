@@ -12,6 +12,7 @@ from core.models import NovelMeta, PipelineStage
 from core.storage import StorageManager
 
 from web_console.dependencies import get_storage_manager_dep
+from web_console.services import character_visuals as character_visual_service
 from web_console.services.novels import _discover_novels
 from web_console.utils import _resolve_project_dir
 
@@ -24,6 +25,20 @@ class CreateNovelRequest(BaseModel):
     genre: str = "未分类"
     concept: str = ""
     target_word_count: int = 3000
+
+
+class CharacterVisualGenerateRequest(BaseModel):
+    prompt: str = ""
+    slot_type: str = "main"  # main | gallery | video
+    index: Optional[int] = None
+    style: str = ""
+    image_preset: str = "720p"
+    aspect_ratio: str = "16:9"
+    regenerate_all: bool = False  # 仅对 video 有效：若为 True，清空所有并重生成
+
+
+class CharacterVisualFinalizeRequest(BaseModel):
+    finalized: bool = True
 
 
 @router.get("/novels")
@@ -192,3 +207,71 @@ async def list_novel_characters(
             return {"novel_id": novel_id, "characters": item.get("characters", [])}
 
     raise HTTPException(status_code=404, detail=f"小说不存在: {novel_id}")
+
+
+@router.get("/novels/{novel_id}/characters/{character_id}/visuals")
+async def get_character_visuals(
+    novel_id: str,
+    character_id: str,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    meta = sm.load_novel_meta(novel_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
+
+    try:
+        return character_visual_service.get_character_visuals(sm, novel_id, character_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"读取角色形象失败: {exc}") from exc
+
+
+@router.post("/novels/{novel_id}/characters/{character_id}/visuals/generate")
+async def generate_character_visuals(
+    novel_id: str,
+    character_id: str,
+    req: CharacterVisualGenerateRequest,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    meta = sm.load_novel_meta(novel_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
+
+    try:
+        return character_visual_service.generate_character_visual(
+            sm=sm,
+            novel_id=novel_id,
+            character_id=character_id,
+            prompt=req.prompt,
+            slot_type=req.slot_type,
+            index=req.index,
+            style=req.style,
+            image_preset=req.image_preset,
+            aspect_ratio=req.aspect_ratio,
+            regenerate_all=req.regenerate_all,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"生成角色形象失败: {exc}") from exc
+
+
+@router.post("/novels/{novel_id}/characters/{character_id}/visuals/finalize")
+async def finalize_character_visuals(
+    novel_id: str,
+    character_id: str,
+    req: CharacterVisualFinalizeRequest,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    meta = sm.load_novel_meta(novel_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
+
+    try:
+        return character_visual_service.finalize_character_visuals(
+            sm=sm,
+            novel_id=novel_id,
+            character_id=character_id,
+            finalized=req.finalized,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"更新定稿状态失败: {exc}") from exc

@@ -19,6 +19,7 @@ import {
   Steps,
   Statistic,
   Divider,
+  Tooltip,
 } from "antd";
 import {
   ArrowLeftOutlined,
@@ -137,12 +138,14 @@ export default function NovelDetail() {
   const navigate = useNavigate();
   const [novel, setNovel] = useState(null);
   const [chapters, setChapters] = useState(null);
+  const [characterThumbs, setCharacterThumbs] = useState({});
   const [error, setError] = useState(null);
   const [activeChapter, setActiveChapter] = useState(null);
 
   useEffect(() => {
     setNovel(null);
     setChapters(null);
+    setCharacterThumbs({});
     setError(null);
     Promise.all([api.getNovel(novelId), api.listChapters(novelId)])
       .then(([n, c]) => {
@@ -151,6 +154,37 @@ export default function NovelDetail() {
       })
       .catch((err) => setError(err.message));
   }, [novelId]);
+
+  useEffect(() => {
+    const chars = novel?.characters || [];
+    if (!novel || chars.length === 0) return;
+
+    let disposed = false;
+    const toCharacterId = (c) => {
+      const raw = c?.character_id || c?.id || c?.name || "unknown";
+      return String(raw).trim() || "unknown";
+    };
+
+    Promise.all(
+      chars.map(async (c) => {
+        const cid = toCharacterId(c);
+        try {
+          const res = await api.getCharacterVisuals(novelId, cid);
+          const main = res?.profile?.main_image;
+          return [cid, main?.thumb_url || main?.url || ""];
+        } catch (e) {
+          return [cid, ""];
+        }
+      })
+    ).then((entries) => {
+      if (disposed) return;
+      setCharacterThumbs(Object.fromEntries(entries));
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [novelId, novel]);
 
   if (error) {
     return (
@@ -179,6 +213,11 @@ export default function NovelDetail() {
   const currentStepIndex = PIPELINE_STEPS.findIndex(
     (s) => s.key === novel.current_stage
   );
+
+  const toCharacterId = (c) => {
+    const raw = c?.character_id || c?.id || c?.name || "unknown";
+    return String(raw).trim() || "unknown";
+  };
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -269,23 +308,62 @@ export default function NovelDetail() {
           <Empty description="尚未定义角色" />
         ) : (
           <List
-            grid={{ gutter: 16, xs: 1, sm: 2, lg: 3 }}
+            grid={{ gutter: 16, xs: 1, sm: 1, md: 2, xl: 3 }}
             dataSource={novel.characters || []}
             renderItem={(c) => (
               <List.Item>
-                <Card size="small">
-                  <List.Item.Meta
-                    avatar={<Avatar icon={<UserOutlined />} />}
-                    title={c.name || c.id || "未知角色"}
-                    description={
-                      <Space direction="vertical" size={0}>
-                        {c.age && <Text type="secondary">{c.age}岁</Text>}
-                        <Text type="secondary">
-                          {c.personality || c.description || "—"}
+                <Card
+                  size="small"
+                  hoverable
+                  onClick={() =>
+                    navigate(
+                      `/novels/${encodeURIComponent(novelId)}/characters/${encodeURIComponent(
+                        toCharacterId(c)
+                      )}`,
+                      {
+                        state: {
+                          character: c,
+                          novelTitle: novel.novel_title,
+                        },
+                      }
+                    )
+                  }
+                >
+                  <Space
+                    align="start"
+                    style={{
+                      width: "100%",
+                      justifyContent: "space-between",
+                      gap: 16,
+                    }}
+                  >
+                    <Space align="start" size={12}>
+                      <Avatar
+                        size={52}
+                        src={characterThumbs[toCharacterId(c)] || undefined}
+                        icon={<UserOutlined />}
+                        shape="square"
+                      />
+                      <Space direction="vertical" size={2}>
+                        <Text strong style={{ fontSize: 16 }}>
+                          {c.name || c.id || c.character_id || "未知角色"}
                         </Text>
+                        <Space size={6} wrap>
+                          {c.gender ? <Tag>{c.gender}</Tag> : null}
+                          {c.age ? <Tag>{c.age}岁</Tag> : null}
+                          {c.role ? <Tag color="blue">{c.role}</Tag> : null}
+                        </Space>
+                        <Tooltip title={c.personality || c.description || "暂无描述"}>
+                          <Text type="secondary" ellipsis style={{ maxWidth: 320 }}>
+                            {c.personality || c.description || "暂无描述"}
+                          </Text>
+                        </Tooltip>
                       </Space>
-                    }
-                  />
+                    </Space>
+                    <Button type="link" onClick={(e) => e.preventDefault()}>
+                      查看详情
+                    </Button>
+                  </Space>
                 </Card>
               </List.Item>
             )}
