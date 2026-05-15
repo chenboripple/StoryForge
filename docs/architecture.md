@@ -8,7 +8,7 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Web 前端层                                   │
 ├─────────────────────────────────────────────────────────────────────┤
-│  web_console/  (FastAPI, 端口 8787)                                 │
+│  web_console/  (FastAPI, 端口 5089)                                 │
 │  - routes/v1/ 仅保留 v1 APIRouter（/api/v1/）                       │
 │  - routes/__init__.py 路由聚合入口（v1-only）                        │
 │  - services/ 业务实现（ip / video / vector / novels）               │
@@ -79,7 +79,7 @@ storage:
 
 server:
     host: 127.0.0.1
-    port: 8787
+    port: 5089
     cors_origins: ["http://localhost:3000", "http://127.0.0.1:3000"]
     cors_allow_credentials: false
     debug: false

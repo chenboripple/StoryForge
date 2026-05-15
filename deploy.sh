@@ -16,7 +16,7 @@ LAUNCHD_LABEL="com.storyforge.webconsole"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
 
 # 默认端口（仅当读不到配置时使用）
-DEFAULT_PORT=8787
+DEFAULT_PORT=5089
 DEFAULT_HOST="0.0.0.0"
 
 RED="\033[31m"

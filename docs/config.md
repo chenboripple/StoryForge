@@ -110,7 +110,7 @@ storage:
 
 server:
     host: 127.0.0.1
-    port: 8787
+    port: 5089
     cors_origins:
         - "http://localhost:3000"
         - "http://127.0.0.1:3000"
@@ -283,7 +283,7 @@ llm:
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
 | `server.host` | 监听地址 | `127.0.0.1` |
-| `server.port` | 端口 | `8787` |
+| `server.port` | 端口 | `5089` |
 | `server.cors_origins` | 允许跨域的源（默认仅本地前端） | `["http://localhost:3000", "http://127.0.0.1:3000"]` |
 | `server.cors_allow_credentials` | CORS 是否允许携带凭据 | `false` |
 | `server.debug` | 服务调试开关（影响错误详情暴露） | `false` |

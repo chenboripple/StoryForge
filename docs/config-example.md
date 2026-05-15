@@ -149,7 +149,7 @@ storage:
 # ==================== 服务器配置 ====================
 server:
   host: 127.0.0.1
-  port: 8787
+  port: 5089
   cors_origins:
     - "http://localhost:3000"
     - "http://127.0.0.1:3000"
