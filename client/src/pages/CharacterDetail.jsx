@@ -35,7 +35,8 @@ const { Title, Text } = Typography;
 const DEFAULT_PROMPT = "角色人像，高细节，电影级光影";
 const DEFAULT_IMAGE_PRESET = "720p";
 const DEFAULT_ASPECT_RATIO = "16:9";
-const FIXED_DISPLAY_ASPECT_RATIO = "3 / 4";
+const DESKTOP_DISPLAY_HEIGHT = "clamp(220px, 22vw, 360px)";
+const MAIN_DISPLAY_HEIGHT = "clamp(300px, 34vw, 560px)";
 
 const IMAGE_PRESET_OPTIONS = [
   { label: "360p - 手机预览", value: "360p" },
@@ -90,7 +91,7 @@ function MainImageSection({ profile, loading, onGenerate, onRegenerate }) {
               <div
                 style={{
                   width: "100%",
-                  aspectRatio: FIXED_DISPLAY_ASPECT_RATIO,
+                  height: MAIN_DISPLAY_HEIGHT,
                   background: "#f7f7f7",
                   borderRadius: 8,
                   overflow: "hidden",
@@ -309,7 +310,7 @@ function GalleryImagesSection({ profile, loading, onGenerate }) {
                 <div
                   style={{
                     width: "100%",
-                    aspectRatio: FIXED_DISPLAY_ASPECT_RATIO,
+                    height: DESKTOP_DISPLAY_HEIGHT,
                     background: "#f7f7f7",
                     overflow: "hidden",
                   }}
@@ -580,7 +581,7 @@ function VideoImagesSection({ profile, loading, onGenerate }) {
                   <div
                     style={{
                       width: "100%",
-                      aspectRatio: FIXED_DISPLAY_ASPECT_RATIO,
+                      height: DESKTOP_DISPLAY_HEIGHT,
                       background: "#f7f7f7",
                       overflow: "hidden",
                     }}

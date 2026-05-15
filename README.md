@@ -67,6 +67,10 @@ cd ..
 
 # 启动后端
 uvicorn web_console.app:app --reload --port 8787
+
+# 或使用常驻服务（macOS，关闭 VS Code 后仍运行）
+./deploy.sh service-install
+./deploy.sh service-status
 ```
 
 然后访问 `http://127.0.0.1:8787`
