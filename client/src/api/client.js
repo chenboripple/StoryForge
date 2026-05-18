@@ -42,6 +42,12 @@ async function request(path, options) {
 
 export const api = {
   listNovels: () => request(`${API_BASE}/novels`),
+  reorderNovels: (novelIds) =>
+    request(`${API_BASE}/novels/reorder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ novel_ids: novelIds }),
+    }),
   createNovel: (data) =>
     request(`${API_BASE}/novels`, {
       method: "POST",
@@ -50,12 +56,47 @@ export const api = {
     }),
   getNovel: (novelId) =>
     request(`${API_BASE}/novels/${encodeURIComponent(novelId)}`),
+  getNovelContext: (novelId) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/context`),
   listChapters: (novelId) =>
     request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters`),
   getChapter: (novelId, chapterNum) =>
     request(
       `${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters/${chapterNum}`
     ),
+  generateNextChapter: (novelId) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters/next`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+  reviseChapter: (novelId, chapterNum) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters/${chapterNum}/revise`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+  proofreadChapters: (novelId, data) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters/proofread`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data || {}),
+    }),
+  getTask: (taskId) => request(`${API_BASE}/tasks/${encodeURIComponent(taskId)}`),
+  generateNovelChapter: (novelId, data = {}) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/chapters/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  getNovelCover: (novelId) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/cover`),
+  generateNovelCover: (novelId, data) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/cover/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
   getCharacterVisuals: (novelId, characterId) =>
     request(
       `${API_BASE}/novels/${encodeURIComponent(novelId)}/characters/${encodeURIComponent(

@@ -32,6 +32,10 @@ async def lifespan(app: FastAPI):
     from web_console.services.ip import register_ip_runner
     register_ip_runner(registry)
 
+    # 注册 visual runner
+    from web_console.services.visual_tasks import register_visual_runner
+    register_visual_runner(registry)
+
     registry.load_state()
     registry.start_dispatcher()
     app.state.task_registry = registry

@@ -34,6 +34,30 @@ is_launchd_loaded() {
     launchctl list | grep -q "$LAUNCHD_LABEL" 2>/dev/null
 }
 
+cleanup_stale_pid() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$PID_FILE"
+            log_info "已清理失效 PID 文件: $PID_FILE"
+        fi
+    fi
+}
+
+stop_pid_file_process() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            sleep 1
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$PID_FILE"
+    fi
+}
+
 # 从 docs/config-example.md 提取 YAML 代码块
 _extract_example_yaml() {
     if [ -f "$CONFIG_EXAMPLE_MD" ]; then
@@ -318,6 +342,8 @@ EOF
 install_persistent_service() {
     mkdirs
     ensure_config
+    cleanup_stale_pid
+    stop_pid_file_process
 
     if [ ! -x "$VENV_DIR/bin/gunicorn" ]; then
         log_info "未检测到可用 gunicorn，先安装 Python 依赖..."
@@ -326,6 +352,7 @@ install_persistent_service() {
 
     generate_launchd_plist
 
+    launchctl stop "$LAUNCHD_LABEL" >/dev/null 2>&1 || true
     launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
     launchctl load -w "$LAUNCHD_PLIST"
 
@@ -346,6 +373,8 @@ start_persistent_service() {
         return 1
     fi
 
+    cleanup_stale_pid
+
     if ! is_launchd_loaded; then
         launchctl load -w "$LAUNCHD_PLIST"
     fi
@@ -355,13 +384,9 @@ start_persistent_service() {
 }
 
 stop_persistent_service() {
-    if ! is_launchd_loaded; then
-        log_warn "常驻服务未加载"
-        return 0
-    fi
-
     launchctl stop "$LAUNCHD_LABEL" >/dev/null 2>&1 || true
     launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
+    stop_pid_file_process
     log_ok "常驻服务已停止并卸载（配置文件保留）"
 }
 

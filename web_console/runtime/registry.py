@@ -19,8 +19,10 @@ from web_console.runtime.models import (
     IpTaskRuntime,
     QueueTask,
     TaskRuntime,
+    VisualTaskRuntime,
     _ip_task_to_dict,
     _task_to_dict,
+    _visual_task_to_dict,
 )
 from web_console.utils import _now, _resolve_debug_output_dir
 
@@ -35,6 +37,7 @@ class TaskRegistry:
         # 运行时状态
         self.tasks: Dict[str, TaskRuntime] = {}
         self.ip_tasks: Dict[str, IpTaskRuntime] = {}
+        self.visual_tasks: Dict[str, VisualTaskRuntime] = {}
         self.task_queue: Deque[QueueTask] = deque()
         self.task_lock = threading.Lock()
         self.task_cond = threading.Condition(self.task_lock)
@@ -61,8 +64,13 @@ class TaskRegistry:
         with self.task_lock:
             return len(self.task_queue)
 
-    def load_state(self) -> None:
-        """从磁盘恢复任务和队列状态。"""
+    def load_state(self, recover_interrupted: bool = True) -> None:
+        """从磁盘恢复任务和队列状态。
+
+        Args:
+            recover_interrupted: 为 True 时，把持久化中的 running 任务恢复为 failed
+                （用于服务重启恢复场景）；为 False 时保留原状态（用于运行中只读刷新）。
+        """
         if not self.runtime_state_file.exists():
             return
 
@@ -82,8 +90,8 @@ class TaskRegistry:
             if not task_id:
                 continue
             status = str(raw.get("status") or "queued")
-            # 进程重启后 running 无法恢复，标记为 failed
-            if status == "running":
+            # 仅在“重启恢复”场景把 running 任务标记为 failed。
+            if recover_interrupted and status == "running":
                 status = "failed"
             restored_tasks[task_id] = TaskRuntime(
                 task_id=task_id,
@@ -107,7 +115,7 @@ class TaskRegistry:
                 continue
             status = str(raw.get("status") or "queued")
             error = raw.get("error")
-            if status == "running":
+            if recover_interrupted and status == "running":
                 status = "failed"
                 error = error or "任务在服务重启时中断"
             restored_ip_tasks[task_id] = IpTaskRuntime(
@@ -125,17 +133,46 @@ class TaskRegistry:
                 result=raw.get("result") if isinstance(raw.get("result"), dict) else {},
             )
 
+        restored_visual_tasks: Dict[str, VisualTaskRuntime] = {}
+        for raw in payload.get("visual_tasks", []):
+            if not isinstance(raw, dict):
+                continue
+            task_id = str(raw.get("task_id") or "").strip()
+            if not task_id:
+                continue
+            status = str(raw.get("status") or "queued")
+            error = raw.get("error")
+            if recover_interrupted and status == "running":
+                status = "failed"
+                error = error or "任务在服务重启时中断"
+            restored_visual_tasks[task_id] = VisualTaskRuntime(
+                task_id=task_id,
+                task_kind=str(raw.get("task_kind") or "character_visual"),
+                novel_id=str(raw.get("novel_id") or ""),
+                character_id=str(raw.get("character_id") or ""),
+                payload=raw.get("payload") if isinstance(raw.get("payload"), dict) else {},
+                created_at=str(raw.get("created_at") or _now()),
+                status=status,
+                started_at=raw.get("started_at"),
+                finished_at=raw.get("finished_at") or (_now() if status == "failed" else None),
+                return_code=raw.get("return_code") if status != "failed" else (raw.get("return_code") or -1),
+                error=error,
+                result=raw.get("result") if isinstance(raw.get("result"), dict) else {},
+            )
+
         restored_queue: Deque[QueueTask] = deque()
         for item in payload.get("queue", []):
             if not isinstance(item, dict):
                 continue
             task_id = str(item.get("task_id") or "").strip()
             task_type = str(item.get("task_type") or "").strip()
-            if not task_id or task_type not in {"pipeline", "ip"}:
+            if not task_id or task_type not in {"pipeline", "ip", "visual"}:
                 continue
             if task_type == "pipeline" and task_id not in restored_tasks:
                 continue
             if task_type == "ip" and task_id not in restored_ip_tasks:
+                continue
+            if task_type == "visual" and task_id not in restored_visual_tasks:
                 continue
             restored_queue.append(QueueTask(task_id=task_id, task_type=task_type))
 
@@ -144,6 +181,8 @@ class TaskRegistry:
             self.tasks.update(restored_tasks)
             self.ip_tasks.clear()
             self.ip_tasks.update(restored_ip_tasks)
+            self.visual_tasks.clear()
+            self.visual_tasks.update(restored_visual_tasks)
             self.task_queue.clear()
             self.task_queue.extend(restored_queue)
             self.running_task_ids.clear()
@@ -161,6 +200,7 @@ class TaskRegistry:
             "updated_at": _now(),
             "tasks": [_task_to_dict(task) for task in self.tasks.values()],
             "ip_tasks": [_ip_task_to_dict(task) for task in self.ip_tasks.values()],
+            "visual_tasks": [_visual_task_to_dict(task) for task in self.visual_tasks.values()],
             "queue": [{"task_id": item.task_id, "task_type": item.task_type} for item in self.task_queue],
         }
         self.runtime_state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -192,8 +232,10 @@ class TaskRegistry:
         """标记任务为运行中。"""
         if task.task_type == "pipeline":
             runtime = self.tasks.get(task.task_id)
-        else:
+        elif task.task_type == "ip":
             runtime = self.ip_tasks.get(task.task_id)
+        else:
+            runtime = self.visual_tasks.get(task.task_id)
         if runtime:
             runtime.status = "running"
             if runtime.started_at is None:
@@ -223,7 +265,12 @@ class TaskRegistry:
                         continue
 
                     # 任务对象可能已经被删除，跳过无效任务
-                    runtime_exists = task.task_id in self.tasks if task.task_type == "pipeline" else task.task_id in self.ip_tasks
+                    if task.task_type == "pipeline":
+                        runtime_exists = task.task_id in self.tasks
+                    elif task.task_type == "ip":
+                        runtime_exists = task.task_id in self.ip_tasks
+                    else:
+                        runtime_exists = task.task_id in self.visual_tasks
                     if not runtime_exists:
                         continue
 
@@ -260,7 +307,7 @@ class TaskRegistry:
         # 尝试停止所有运行中的任务
         with self.task_lock:
             for task_id in list(self.running_task_ids):
-                task = self.tasks.get(task_id) or self.ip_tasks.get(task_id)
+                task = self.tasks.get(task_id) or self.ip_tasks.get(task_id) or self.visual_tasks.get(task_id)
                 if task and hasattr(task, "process") and task.process and task.process.poll() is None:
                     try:
                         task.process.terminate()

@@ -4,17 +4,13 @@ import {
   Alert,
   Button,
   Card,
-  Collapse,
   Col,
   Descriptions,
   Divider,
   Empty,
-  Form,
   Image,
-  Input,
   Modal,
   Row,
-  Select,
   Space,
   Spin,
   Tag,
@@ -30,6 +26,7 @@ import {
 } from "@ant-design/icons";
 
 import { api } from "../api/client";
+import VisualGenerationForm from "../components/VisualGenerationForm";
 
 const { Title, Text } = Typography;
 const DEFAULT_PROMPT = "角色人像，高细节，电影级光影";
@@ -37,33 +34,26 @@ const DEFAULT_IMAGE_PRESET = "720p";
 const DEFAULT_ASPECT_RATIO = "16:9";
 const DESKTOP_DISPLAY_HEIGHT = "clamp(220px, 22vw, 360px)";
 const MAIN_DISPLAY_HEIGHT = "clamp(300px, 34vw, 560px)";
+const TASK_POLL_INTERVAL_MS = 1200;
+const TASK_MAX_POLLS = 150;
 
-const IMAGE_PRESET_OPTIONS = [
-  { label: "360p - 手机预览", value: "360p" },
-  { label: "540p - 手机高清预览", value: "540p" },
-  { label: "720p - 默认网页/手机/轻量平板", value: "720p" },
-  { label: "1080p - 常规显示器/平板高清", value: "1080p" },
-  { label: "2K - 笔记本高分屏/平板高精", value: "2k" },
-  { label: "4K - 大屏显示器/海报", value: "4k" },
-];
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-const ASPECT_RATIO_OPTIONS = [
-  { label: "16:9 - 电脑显示器 / 电视 / 多数笔记本", value: "16:9" },
-  { label: "16:10 - MacBook Air/Pro / 部分安卓平板横屏", value: "16:10" },
-  { label: "21:9 - 带鱼屏显示器", value: "21:9" },
-  { label: "4:3 - iPad / iPad Air / iPad Pro", value: "4:3" },
-  { label: "3:2 - Surface / 部分生产力平板", value: "3:2" },
-  { label: "1:1 - 方图封面 / 社媒头像", value: "1:1" },
-  { label: "4:5 - 社媒竖图 / 平板阅读图", value: "4:5" },
-  { label: "3:4 - 竖版海报 / 平板竖屏", value: "3:4" },
-  { label: "2:3 - 手机壁纸 / 角色立绘", value: "2:3" },
-  { label: "5:4 - 老式显示器 / 工控屏", value: "5:4" },
-  { label: "9:16 - 安卓手机竖屏 / 短视频封面", value: "9:16" },
-  { label: "9:19.5 - iPhone 14/15/16 / 全面屏安卓", value: "9:19.5" },
-];
+async function waitForTask(taskId) {
+  for (let i = 0; i < TASK_MAX_POLLS; i += 1) {
+    const task = await api.getTask(taskId);
+    if (["success", "failed", "cancelled", "stopped"].includes(task.status)) {
+      return task;
+    }
+    await sleep(TASK_POLL_INTERVAL_MS);
+  }
+  throw new Error("任务执行超时，请稍后重试");
+}
 
 // 主形象编辑面板
-function MainImageSection({ profile, loading, onGenerate, onRegenerate }) {
+function MainImageSection({ profile, loading, onGenerate }) {
   const [showForm, setShowForm] = useState(false);
   const [prompt, setPrompt] = useState(profile?.main_image?.prompt || DEFAULT_PROMPT);
   const [style, setStyle] = useState(profile?.main_image?.style || "");
@@ -141,53 +131,21 @@ function MainImageSection({ profile, loading, onGenerate, onRegenerate }) {
 
           {showForm && (
             <Space direction="vertical" style={{ width: "100%" }}>
-              <Form layout="vertical" size="small">
-                <Form.Item label="提示词">
-                  <Input.TextArea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    rows={3}
-                    placeholder={DEFAULT_PROMPT}
-                  />
-                </Form.Item>
-                <Form.Item label="风格补充（可选）">
-                  <Input
-                    value={style}
-                    onChange={(e) => setStyle(e.target.value)}
-                    placeholder="例如：国风写实 / 赛博朋克"
-                  />
-                </Form.Item>
-                <Row gutter={16}>
-                  <Col xs={24} md={12}>
-                    <Form.Item label="图片尺寸">
-                      <Select
-                        value={imagePreset}
-                        onChange={setImagePreset}
-                        options={IMAGE_PRESET_OPTIONS}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={12}>
-                    <Form.Item label="长宽比例">
-                      <Select
-                        value={aspectRatio}
-                        onChange={setAspectRatio}
-                        options={ASPECT_RATIO_OPTIONS}
-                      />
-                    </Form.Item>
-                  </Col>
-                </Row>
-                <Space wrap>
-                  <Button
-                    type="primary"
-                    loading={loading}
-                    onClick={handleGenerate}
-                  >
-                    确认重生成
-                  </Button>
-                  <Button onClick={() => setShowForm(false)}>取消</Button>
-                </Space>
-              </Form>
+              <VisualGenerationForm
+                prompt={prompt}
+                setPrompt={setPrompt}
+                style={style}
+                setStyle={setStyle}
+                imagePreset={imagePreset}
+                setImagePreset={setImagePreset}
+                aspectRatio={aspectRatio}
+                setAspectRatio={setAspectRatio}
+                loading={loading}
+                showActions
+                submitText="确认重生成"
+                onSubmit={handleGenerate}
+                onCancel={() => setShowForm(false)}
+              />
             </Space>
           )}
         </Space>
@@ -203,53 +161,21 @@ function MainImageSection({ profile, loading, onGenerate, onRegenerate }) {
           </Button>
 
           {showForm && (
-            <Form layout="vertical" size="small">
-              <Form.Item label="提示词">
-                <Input.TextArea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  rows={3}
-                  placeholder={DEFAULT_PROMPT}
-                />
-              </Form.Item>
-              <Form.Item label="风格补充（可选）">
-                <Input
-                  value={style}
-                  onChange={(e) => setStyle(e.target.value)}
-                  placeholder="例如：国风写实 / 赛博朋克"
-                />
-              </Form.Item>
-              <Row gutter={16}>
-                <Col xs={24} md={12}>
-                  <Form.Item label="图片尺寸">
-                    <Select
-                      value={imagePreset}
-                      onChange={setImagePreset}
-                      options={IMAGE_PRESET_OPTIONS}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Form.Item label="长宽比例">
-                    <Select
-                      value={aspectRatio}
-                      onChange={setAspectRatio}
-                      options={ASPECT_RATIO_OPTIONS}
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Space wrap>
-                <Button
-                  type="primary"
-                  loading={loading}
-                  onClick={handleGenerate}
-                >
-                  生成主形象
-                </Button>
-                <Button onClick={() => setShowForm(false)}>取消</Button>
-              </Space>
-            </Form>
+            <VisualGenerationForm
+              prompt={prompt}
+              setPrompt={setPrompt}
+              style={style}
+              setStyle={setStyle}
+              imagePreset={imagePreset}
+              setImagePreset={setImagePreset}
+              aspectRatio={aspectRatio}
+              setAspectRatio={setAspectRatio}
+              loading={loading}
+              showActions
+              submitText="生成主形象"
+              onSubmit={handleGenerate}
+              onCancel={() => setShowForm(false)}
+            />
           )}
         </Space>
       )}
@@ -392,43 +318,19 @@ function GalleryImagesSection({ profile, loading, onGenerate }) {
         cancelText="取消"
         destroyOnClose
       >
-        <Form layout="vertical" size="small">
-          <Form.Item label="提示词（若为空则基于主形象自动生成）">
-            <Input.TextArea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              rows={3}
-              placeholder="留空表示继承主形象特征"
-            />
-          </Form.Item>
-          <Form.Item label="风格补充（可选）">
-            <Input
-              value={style}
-              onChange={(e) => setStyle(e.target.value)}
-              placeholder="例如：特定场景 / 衣着风格"
-            />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col xs={24} md={12}>
-              <Form.Item label="图片尺寸">
-                <Select
-                  value={imagePreset}
-                  onChange={setImagePreset}
-                  options={IMAGE_PRESET_OPTIONS}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item label="长宽比例">
-                <Select
-                  value={aspectRatio}
-                  onChange={setAspectRatio}
-                  options={ASPECT_RATIO_OPTIONS}
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-        </Form>
+        <VisualGenerationForm
+          prompt={prompt}
+          setPrompt={setPrompt}
+          style={style}
+          setStyle={setStyle}
+          imagePreset={imagePreset}
+          setImagePreset={setImagePreset}
+          aspectRatio={aspectRatio}
+          setAspectRatio={setAspectRatio}
+          promptLabel="提示词（若为空则基于主形象自动生成）"
+          promptPlaceholder="留空表示继承主形象特征"
+          stylePlaceholder="例如：特定场景 / 衣着风格"
+        />
       </Modal>
     </Card>
   );
@@ -508,64 +410,35 @@ function VideoImagesSection({ profile, loading, onGenerate }) {
           extra={<Button type="text" onClick={resetForm} size="small">关闭</Button>}
           style={{ marginBottom: 16 }}
         >
-          <Form layout="vertical" size="small">
-            {!regenerateAll && (
-              <Form.Item label="提示词（若为空则基于主形象自动生成）">
-                <Input.TextArea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  rows={3}
-                  placeholder="留空表示继承主形象特征"
+          <VisualGenerationForm
+            prompt={prompt}
+            setPrompt={setPrompt}
+            style={style}
+            setStyle={setStyle}
+            imagePreset={imagePreset}
+            setImagePreset={setImagePreset}
+            aspectRatio={aspectRatio}
+            setAspectRatio={setAspectRatio}
+            promptLabel="提示词（若为空则基于主形象自动生成）"
+            promptPlaceholder="留空表示继承主形象特征"
+            stylePlaceholder="例如：特定镜头角度 / 光线条件"
+            hidePrompt={regenerateAll}
+            hideStyle={regenerateAll}
+            extraTop={
+              regenerateAll ? (
+                <Alert
+                  message="全量重生成将生成 5 张全方位立体图（正面、侧面、背面、斜45°、脸部特写），替换所有现有图片"
+                  type="info"
+                  style={{ marginBottom: 16 }}
                 />
-              </Form.Item>
-            )}
-            {!regenerateAll && (
-              <Form.Item label="风格补充（可选）">
-                <Input
-                  value={style}
-                  onChange={(e) => setStyle(e.target.value)}
-                  placeholder="例如：特定镜头角度 / 光线条件"
-                />
-              </Form.Item>
-            )}
-            {regenerateAll && (
-              <Alert
-                message="全量重生成将生成 5 张全方位立体图（正面、侧面、背面、斜45°、脸部特写），替换所有现有图片"
-                type="info"
-                style={{ marginBottom: 16 }}
-              />
-            )}
-            <Row gutter={16}>
-              <Col xs={24} md={12}>
-                <Form.Item label="图片尺寸">
-                  <Select
-                    value={imagePreset}
-                    onChange={setImagePreset}
-                    options={IMAGE_PRESET_OPTIONS}
-                  />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={12}>
-                <Form.Item label="长宽比例">
-                  <Select
-                    value={aspectRatio}
-                    onChange={setAspectRatio}
-                    options={ASPECT_RATIO_OPTIONS}
-                  />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Space wrap>
-              <Button
-                type="primary"
-                loading={loading}
-                onClick={handleGenerate}
-              >
-                {regenerateAll ? "全量重生成" : editIndex !== null ? "确认重生成" : "新增"}
-              </Button>
-              <Button onClick={resetForm}>取消</Button>
-            </Space>
-          </Form>
+              ) : null
+            }
+            loading={loading}
+            showActions
+            submitText={regenerateAll ? "全量重生成" : editIndex !== null ? "确认重生成" : "新增"}
+            onSubmit={handleGenerate}
+            onCancel={resetForm}
+          />
         </Card>
       )}
 
@@ -682,7 +555,7 @@ export default function CharacterDetail() {
   const doGenerate = async (slotType, params = {}) => {
     setSaving(true);
     try {
-      const res = await api.generateCharacterVisual(novelId, characterId, {
+      const submit = await api.generateCharacterVisual(novelId, characterId, {
         prompt: params.prompt || "",
         slot_type: slotType,
         style: params.style || "",
@@ -691,7 +564,19 @@ export default function CharacterDetail() {
         aspect_ratio: params.aspect_ratio || DEFAULT_ASPECT_RATIO,
         regenerate_all: params.regenerate_all || false,
       });
-      setProfile(res.profile || null);
+
+      const taskId = submit?.task_id;
+      if (!taskId) {
+        throw new Error("后端未返回任务ID");
+      }
+
+      const task = await waitForTask(taskId);
+      if (task.status !== "success") {
+        throw new Error(task.error || "图片任务执行失败");
+      }
+
+      const latest = await api.getCharacterVisuals(novelId, characterId);
+      setProfile(latest.profile || null);
       message.success("生成成功");
       return true;
     } catch (err) {

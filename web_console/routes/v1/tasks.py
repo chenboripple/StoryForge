@@ -15,8 +15,10 @@ from web_console.runtime.models import (
     IpTaskRuntime,
     QueueTask,
     TaskRuntime,
+    VisualTaskRuntime,
     _ip_task_to_dict,
     _task_to_dict,
+    _visual_task_to_dict,
 )
 from web_console.runtime.registry import TaskRegistry
 from web_console.runtime.templates import _assert_command_allowed
@@ -49,13 +51,30 @@ def _validate_task_project_dir(project_dir: str) -> str:
     return resolved
 
 
-def _refresh_and_get_task(registry: TaskRegistry, task_id: str) -> Optional[TaskRuntime]:
+def _refresh_and_get_task(registry: TaskRegistry, task_id: str) -> Optional[TaskRuntime | IpTaskRuntime | VisualTaskRuntime]:
     """辅助函数：从 registry 中获取任务。"""
     with registry.task_lock:
         if task_id in registry.tasks:
             return registry.tasks[task_id]
         if task_id in registry.ip_tasks:
             return registry.ip_tasks[task_id]
+        if task_id in registry.visual_tasks:
+            return registry.visual_tasks[task_id]
+
+    # 多进程 worker 场景下，任务可能由其他 worker 创建：
+    # 尝试从持久化状态刷新一次，再查询。
+    try:
+        registry.load_state(recover_interrupted=False)
+    except Exception:
+        pass
+
+    with registry.task_lock:
+        if task_id in registry.tasks:
+            return registry.tasks[task_id]
+        if task_id in registry.ip_tasks:
+            return registry.ip_tasks[task_id]
+        if task_id in registry.visual_tasks:
+            return registry.visual_tasks[task_id]
         return None
 
 
@@ -66,6 +85,7 @@ async def list_tasks(registry: TaskRegistry = Depends(get_task_registry)) -> dic
         return {
             "tasks": [_task_to_dict(t) for t in registry.tasks.values()],
             "ip_tasks": [_ip_task_to_dict(t) for t in registry.ip_tasks.values()],
+            "visual_tasks": [_visual_task_to_dict(t) for t in registry.visual_tasks.values()],
         }
 
 
@@ -89,8 +109,15 @@ async def get_task(
     except Exception:
         pass
 
-    d = task.to_dict()
-    d["log_tail"] = log_content
+    if isinstance(task, TaskRuntime):
+        d = _task_to_dict(task)
+    elif isinstance(task, IpTaskRuntime):
+        d = _ip_task_to_dict(task)
+    else:
+        d = _visual_task_to_dict(task)
+
+    if isinstance(task, TaskRuntime):
+        d["log_tail"] = log_content
     return d
 
 
@@ -190,6 +217,14 @@ async def stop_task(
             registry.task_cond.notify_all()
             return {"ok": True, "task": _ip_task_to_dict(task)}
 
+        if task_id in registry.visual_tasks:
+            task = registry.visual_tasks[task_id]
+            if task.status in ("queued", "running"):
+                task.status = "cancelled"
+            registry._save_state_unlocked()
+            registry.task_cond.notify_all()
+            return {"ok": True, "task": _visual_task_to_dict(task)}
+
     raise HTTPException(status_code=404, detail="task not found")
 
 
@@ -213,6 +248,11 @@ async def delete_task(
             return {"ok": True}
         if task_id in registry.ip_tasks:
             registry.ip_tasks.pop(task_id)
+            registry._save_state_unlocked()
+            return {"ok": True}
+
+        if task_id in registry.visual_tasks:
+            registry.visual_tasks.pop(task_id)
             registry._save_state_unlocked()
             return {"ok": True}
 
