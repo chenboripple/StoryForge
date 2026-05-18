@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from core.agent import BaseAgent, AgentPersona
+from core.context_orchestrator import ContextOrchestrator
 from core.memory import StoryMemory
 from core.schema import (
     ReviewResult, ProofreadResult, ChapterContent,
@@ -152,6 +153,7 @@ class WriterAgent(BaseAgent):
             state=state
         )
         self.prompt_assembler = prompt_assembler or PromptAssembler()
+        self.context_orchestrator = ContextOrchestrator()
     
     def invoke(self, state):
         """写作章节"""
@@ -159,18 +161,14 @@ class WriterAgent(BaseAgent):
         self.state = state
         self._current_chapter = state.current_chapter
 
-        # 0. 检查其他 Agent 的反馈消息（如：审稿建议、校对提醒等）
-        agent_messages = self._get_messages_context(state)
-        if agent_messages:
-            line_count = len(agent_messages.split('\n')) - 1
-            print(f"  📨 [墨川] 收到 {line_count} 条其他 Agent 的消息")
-
-        # 1. 获取章节计划
-        chapter_plan = self._get_chapter_plan(state)
-
-        # 2. 构建上下文
-        context = self._build_writer_context(state)
-        memory_context = self._build_memory_context(state)
+        # 0. 渐进式披露加载上下文
+        context_bundle = self.context_orchestrator.build_writer_bundle(
+            state,
+            memory_context=self._build_memory_context(state)
+        )
+        chapter_plan = context_bundle.get("chapter_plan")
+        context = context_bundle.get("context", "")
+        memory_context = context_bundle.get("memory_context", "")
 
         # 3. 使用 PromptAssembler 组装 prompt
         prompt = self.prompt_assembler.assemble_writer_prompt(
@@ -249,6 +247,11 @@ class WriterAgent(BaseAgent):
     
     def _get_chapter_plan(self, state):
         """获取章节计划"""
+        if hasattr(state, 'get_chapter_brief'):
+            brief = state.get_chapter_brief(state.current_chapter)
+            if brief:
+                return brief
+
         # 优先从 creation.chapter_outlines 获取
         if hasattr(state, 'creation') and state.creation:
             outlines = state.creation.get('chapter_outlines', {})
@@ -330,6 +333,7 @@ class ReviewerAgent(BaseAgent):
             state=state
         )
         self.prompt_assembler = prompt_assembler or PromptAssembler()
+        self.context_orchestrator = ContextOrchestrator()
 
     def invoke(self, state):
         """审稿（结构化输出 + AI味评估 + Agent 间通信）"""
@@ -342,24 +346,18 @@ class ReviewerAgent(BaseAgent):
             state.error_message = f"第{state.current_chapter}章无内容可审"
             return state
 
-        # 0. 检查来自 Writer 的消息
-        writer_messages = self.get_messages_from_state(
-            chapter=state.current_chapter,
-            limit=3
-        )
-        if writer_messages:
-            print(f"  📨 [青锋] 收到来自墨川的消息")
-
-        # 1. 获取章节计划
-        chapter_plan = self._get_chapter_plan(state)
+        # 0. 渐进式披露加载审稿上下文
+        context_bundle = self.context_orchestrator.build_reviewer_bundle(state, chapter_text)
+        chapter_plan = context_bundle.get("chapter_plan") or self._get_chapter_plan(state)
 
         # 2. 使用 PromptAssembler 组装审稿 prompt
         prompt = self.prompt_assembler.assemble_reviewer_prompt(
             persona=self.persona,
-            chapter_content=chapter_text,
+            chapter_content=context_bundle.get("chapter_content", chapter_text),
             chapter_plan=chapter_plan,
-            characters=state.characters,
-            previous_chapter=self._get_previous_chapter(state)
+            characters=context_bundle.get("characters", state.characters),
+            previous_chapter=context_bundle.get("previous_chapter", self._get_previous_chapter(state)),
+            extra_context=context_bundle.get("context", "")
         )
 
         # 3. 调用 LLM
@@ -370,6 +368,37 @@ class ReviewerAgent(BaseAgent):
 
         # 5. 更新状态
         self._update_state_with_review(state, review)
+
+        # 5.1 反哺章节概述
+        issue_dicts = []
+        for issue in getattr(review, 'issues', []) or []:
+            issue_dicts.append({
+                "severity": getattr(issue, "severity", ""),
+                "location": getattr(issue, "location", ""),
+                "description": getattr(issue, "description", ""),
+                "suggestion": getattr(issue, "suggestion", ""),
+            })
+        if hasattr(state, 'update_chapter_brief_from_feedback'):
+            state.update_chapter_brief_from_feedback(
+                chapter=state.current_chapter,
+                summary=review.summary,
+                issues=issue_dicts,
+            )
+
+        # 5.2 重写判定触发卷级提案
+        if getattr(review.verdict, 'value', '') == 'rewrite' and hasattr(state, 'add_proposal'):
+            state.add_proposal(
+                target_layer="volume_brief",
+                reason="审稿判定需重写，可能已偏离卷级目标",
+                diff={
+                    "chapter": state.current_chapter,
+                    "review_summary": review.summary,
+                    "critical_issues": issue_dicts[:5],
+                },
+                chapter=state.current_chapter,
+                confidence=0.8,
+                risk_level="medium",
+            )
 
         # 6. Agent 自主路由建议（根据 verdict）
         if review.verdict.value == "pass":
@@ -430,6 +459,11 @@ class ReviewerAgent(BaseAgent):
     
     def _get_chapter_plan(self, state):
         """获取章节计划"""
+        if hasattr(state, 'get_chapter_brief'):
+            brief = state.get_chapter_brief(state.current_chapter)
+            if brief:
+                return brief
+
         if hasattr(state, 'creation') and state.creation:
             outlines = state.creation.get('chapter_outlines', {})
             if state.current_chapter in outlines:
@@ -531,6 +565,7 @@ class ReviserAgent(BaseAgent):
             state=state
         )
         self.prompt_assembler = prompt_assembler or PromptAssembler()
+        self.context_orchestrator = ContextOrchestrator()
 
     def invoke(self, state):
         """根据审稿意见修改（支持 MessageBus 消息反馈）"""
@@ -545,27 +580,26 @@ class ReviserAgent(BaseAgent):
             state.error_message = "无审稿记录，无法修改"
             return state
 
-        # 0. 检查来自审稿者的详细消息
-        reviewer_messages = self.get_messages_from_state(
-            chapter=state.current_chapter,
-            limit=5
-        )
-        if reviewer_messages:
-            print(f"  📨 [墨川] 收到 {len(reviewer_messages)} 条来自青锋的消息")
-
         # 1. 获取结构化审稿结果
         structured_review = None
         if hasattr(state, 'structured_reviews') and state.current_chapter in state.structured_reviews:
             structured_review = state.structured_reviews[state.current_chapter][-1]
 
-        # 2. 构建修改上下文
-        context = self._build_reviser_context(state, chapter_text, latest, structured_review)
+        # 2. 渐进式披露加载修改上下文
+        context_bundle = self.context_orchestrator.build_reviser_bundle(
+            state,
+            chapter_text,
+            latest,
+            structured_review,
+        )
+        context = context_bundle.get("context", "")
 
         # 3. 使用 PromptAssembler 组装修改 prompt
         prompt = self.prompt_assembler.assemble_writer_prompt(
             persona=self.persona,
-            chapter_plan=None,
+            chapter_plan=state.get_chapter_brief(state.current_chapter) if hasattr(state, 'get_chapter_brief') else None,
             context=context,
+            memory_context=context_bundle.get("memory_context", ""),
             humanization=True
         )
 
@@ -649,6 +683,7 @@ class ProofreaderAgent(BaseAgent):
             state=state
         )
         self.prompt_assembler = prompt_assembler or PromptAssembler()
+        self.context_orchestrator = ContextOrchestrator()
 
     def invoke(self, state):
         """校对（结构化输出 + 终审 + Agent 间通信）"""
@@ -661,22 +696,18 @@ class ProofreaderAgent(BaseAgent):
         scope = getattr(state, "proofread_scope", "chapter")
         proofread_context = getattr(state, "proofread_context", {}) or {}
 
-        # 0. 检查来自其他 Agent 的消息
-        messages = self.get_messages_from_state(
-            chapter=state.current_chapter,
-            limit=3
-        )
-        if messages:
-            print(f"  📨 [砚清] 收到 {len(messages)} 条消息")
+        # 0. 渐进式披露加载校对上下文
+        context_bundle = self.context_orchestrator.build_proofreader_bundle(state, chapter_text)
 
         # 1. 使用 PromptAssembler 组装校对 prompt
         prompt = self.prompt_assembler.assemble_proofreader_prompt(
             persona=self.persona,
-            chapter_content=chapter_text,
-            characters=state.characters,
-            world_setting=proofread_context.get("world_setting"),
-            scope=scope,
-            project_docs=proofread_context if scope == "project_docs" else None
+            chapter_content=context_bundle.get("chapter_content", chapter_text),
+            characters=context_bundle.get("characters", state.characters),
+            world_setting=context_bundle.get("world_setting", proofread_context.get("world_setting")),
+            scope=context_bundle.get("scope", scope),
+            project_docs=context_bundle.get("project_docs") if context_bundle.get("scope", scope) == "project_docs" else None,
+            extra_context=context_bundle.get("context", "")
         )
 
         # 2. 调用 LLM
@@ -687,6 +718,41 @@ class ProofreaderAgent(BaseAgent):
 
         # 4. 更新状态
         self._update_state_with_proofread(state, proofread)
+
+        # 4.1 校对反馈反哺到章节概述
+        issue_dicts = []
+        for issue in getattr(proofread, 'issues', []) or []:
+            issue_dicts.append({
+                "severity": getattr(issue, "severity", ""),
+                "location": getattr(issue, "location", ""),
+                "description": getattr(issue, "explanation", ""),
+                "suggestion": getattr(issue, "correction", ""),
+                "type": getattr(issue, "issue_type", ""),
+            })
+        if hasattr(state, 'update_chapter_brief_from_feedback'):
+            state.update_chapter_brief_from_feedback(
+                chapter=state.current_chapter,
+                summary=getattr(proofread, 'summary', ''),
+                issues=issue_dicts,
+            )
+
+        severe_setting_issues = [
+            i for i in issue_dicts
+            if str(i.get("severity", "")).upper() in {"S", "A", "CRITICAL"}
+            and any(k in str(i.get("description", "")).lower() for k in ["设定", "时间", "world", "timeline", "角色"])
+        ]
+        if severe_setting_issues and hasattr(state, 'add_proposal'):
+            state.add_proposal(
+                target_layer="world_or_character",
+                reason="校对发现高风险设定冲突，需跨层确认",
+                diff={
+                    "chapter": state.current_chapter,
+                    "issues": severe_setting_issues[:5],
+                },
+                chapter=state.current_chapter,
+                confidence=0.85,
+                risk_level="high",
+            )
 
         # 5. Agent 自主路由建议（根据终审结果）
         verdict = proofread.verdict if hasattr(proofread, 'verdict') else "需返修"

@@ -163,7 +163,8 @@ class PromptAssembler:
         chapter_plan: Any,
         characters: List[Any],
         previous_chapter: str = "",
-        next_chapter_plan: Any = None
+        next_chapter_plan: Any = None,
+        extra_context: str = "",
     ) -> str:
         """
         组装审稿 Prompt
@@ -195,6 +196,10 @@ class PromptAssembler:
         # 6. 前后章衔接
         if previous_chapter:
             parts.append(f"\n========== 前一章结尾 ==========\n{previous_chapter[-500:]}\n")
+
+        # 6.1 额外上下文（如 Agent 消息、预算决策后的补充信息）
+        if extra_context:
+            parts.append(f"\n========== 额外上下文 ==========\n{extra_context}\n")
         
         # 7. 输出格式要求
         parts.append("\n========== 输出格式要求 ==========")
@@ -209,7 +214,8 @@ class PromptAssembler:
         characters: List[Any],
         world_setting: Any = None,
         scope: str = "chapter",
-        project_docs: Any = None
+        project_docs: Any = None,
+        extra_context: str = "",
     ) -> str:
         """
         组装校对 Prompt
@@ -251,6 +257,10 @@ class PromptAssembler:
         if project_docs:
             parts.append("\n========== 综合项目文档（大纲/卷纲/设定） ==========")
             parts.append(self._format_project_docs_for_proofread(project_docs))
+
+        # 7.1 额外上下文（如 Agent 消息、预算决策后的补充信息）
+        if extra_context:
+            parts.append(f"\n========== 额外上下文 ==========\n{extra_context}\n")
 
         # 8. 输出格式要求
         parts.append("\n========== 输出格式要求 ==========")

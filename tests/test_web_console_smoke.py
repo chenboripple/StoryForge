@@ -24,30 +24,28 @@ def test_app_loads_with_expected_routes():
 
     paths = sorted({getattr(r, "path", "") for r in app.routes if hasattr(r, "path")})
     expected = {
-        "/api/config",
-        "/api/health",
-        "/health",
-        "/api/ai/generate",
-        "/api/templates",
-        "/api/tasks/start",
-        "/api/tasks",
-        "/api/tasks/{task_id}/logs",
-        "/api/tasks/{task_id}/log-file",
-        "/api/tasks/{task_id}/stop",
-        "/api/novels",
-        "/api/novels/{novel_id}",
-        "/api/novels/{novel_id}/chapters",
-        "/api/novels/{novel_id}/chapters/{chapter_num}",
-        "/api/novels/{novel_id}/characters",
-        "/api/import/formats",
-        "/api/import/upload",
-        "/api/import/save",
-        "/api/ip/generate",
-        "/api/ip/tasks",
-        "/api/ip/tasks/{task_id}",
-        "/api/video/script/generate",
-        "/api/video/consistency/check",
-        "/api/video/consistency/{novel_id}",
+        "/api/v1/config",
+        "/api/v1/health",
+        "/api/v1/ai/generate",
+        "/api/v1/templates",
+        "/api/v1/tasks",
+        "/api/v1/tasks/{task_id}",
+        "/api/v1/tasks/{task_id}/stop",
+        "/api/v1/novels",
+        "/api/v1/novels/{novel_id}",
+        "/api/v1/novels/{novel_id}/proposals",
+        "/api/v1/novels/{novel_id}/context-decisions",
+        "/api/v1/novels/{novel_id}/chapters",
+        "/api/v1/novels/{novel_id}/chapters/{chapter_num}",
+        "/api/v1/novels/{novel_id}/characters",
+        "/api/v1/import/formats",
+        "/api/v1/import/upload",
+        "/api/v1/import/save",
+        "/api/v1/ip/{novel_id}/story_bible",
+        "/api/v1/ip/{novel_id}/character/{character_id}",
+        "/api/v1/video/{novel_id}/script/generate",
+        "/api/v1/video/{novel_id}/consistency/check",
+        "/api/v1/video/{novel_id}/consistency",
     }
     missing = expected - set(paths)
     assert not missing, f"missing routes after refactor: {missing}"
@@ -55,27 +53,40 @@ def test_app_loads_with_expected_routes():
 
 def test_api_health_ok():
     client = _client()
-    resp = client.get("/api/health")
+    resp = client.get("/api/v1/health")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "ok"
-    assert "config_path" in body
-    assert "data_dir" in body
+    assert body.get("status") == "ok"
+    assert "running_tasks" in body
 
 
-def test_health_ok():
+def test_health_endpoint_removed():
     client = _client()
     resp = client.get("/health")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is True
-    for key in ("tasks", "ip_tasks", "running_tasks", "queued_tasks"):
-        assert key in body
+    assert resp.status_code == 404
+
+
+def test_legacy_api_prefix_returns_410():
+    client = _client()
+
+    resp = client.get("/api")
+    assert resp.status_code == 410
+    assert resp.json().get("error") == "gone"
+
+    for method, path in [
+        (client.get, "/api/novels"),
+        (client.get, "/api/tasks"),
+        (client.post, "/api/tasks/start"),
+        (client.get, "/api/import/formats"),
+    ]:
+        r = method(path)
+        assert r.status_code == 410
+        assert r.json().get("error") == "gone"
 
 
 def test_api_config_returns_console_caps():
     client = _client()
-    resp = client.get("/api/config")
+    resp = client.get("/api/v1/config")
     assert resp.status_code == 200
     body = resp.json()
     assert "max_running_tasks" in body
@@ -85,7 +96,7 @@ def test_api_config_returns_console_caps():
 
 def test_api_tasks_returns_list_shape():
     client = _client()
-    resp = client.get("/api/tasks")
+    resp = client.get("/api/v1/tasks")
     assert resp.status_code == 200
     body = resp.json()
     assert isinstance(body.get("tasks"), list)
@@ -93,7 +104,7 @@ def test_api_tasks_returns_list_shape():
 
 def test_api_templates_returns_list_shape():
     client = _client()
-    resp = client.get("/api/templates")
+    resp = client.get("/api/v1/templates")
     assert resp.status_code == 200
     body = resp.json()
     assert isinstance(body.get("templates"), list)
@@ -101,13 +112,13 @@ def test_api_templates_returns_list_shape():
 
 def test_api_novels_rejects_missing_dir():
     client = _client()
-    resp = client.get("/api/novels", params={"project_dir": "/does/not/exist/abc123"})
+    resp = client.get("/api/v1/novels", params={"project_dir": "/does/not/exist/abc123"})
     assert resp.status_code == 400
 
 
 def test_api_import_formats_lists_supported_types():
     client = _client()
-    resp = client.get("/api/import/formats")
+    resp = client.get("/api/v1/import/formats")
     assert resp.status_code == 200
     formats = resp.json().get("formats", [])
     types = {f.get("type") for f in formats}
@@ -128,3 +139,13 @@ def test_root_returns_index_or_404_when_no_build():
         assert resp.status_code == 404
         body = resp.json()
         assert "expected_path" in body
+
+
+def test_progressive_endpoints_return_404_without_checkpoint():
+    client = _client()
+    for path in [
+        "/api/v1/novels/nonexistent/proposals",
+        "/api/v1/novels/nonexistent/context-decisions",
+    ]:
+        resp = client.get(path)
+        assert resp.status_code == 404

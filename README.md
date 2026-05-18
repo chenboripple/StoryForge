@@ -66,10 +66,14 @@ npm run build
 cd ..
 
 # 启动后端
-uvicorn web_console.app:app --reload --port 8787
+uvicorn web_console.app:app --reload --port 5089
+
+# 或使用常驻服务（macOS，关闭 VS Code 后仍运行）
+./deploy.sh service-install
+./deploy.sh service-status
 ```
 
-然后访问 `http://127.0.0.1:8787`
+然后访问 `http://127.0.0.1:5089`
 
 ---
 
@@ -184,7 +188,7 @@ StoryForge/
 ├── client/                 # React 前端
 ├── web_console/            # FastAPI 后端
 │   ├── app.py              # 应用入口 + 生命周期管理
-│   ├── routes/             # API 路由（含 /api/v1/ 版本化）
+│   ├── routes/             # API 路由聚合（v1-only）
 │   ├── services/           # 业务逻辑
 │   ├── runtime/            # TaskRegistry 任务管理
 │   └── middleware/         # 中间件

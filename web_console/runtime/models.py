@@ -45,9 +45,25 @@ class IpTaskRuntime:
 
 
 @dataclass
+class VisualTaskRuntime:
+    task_id: str
+    task_kind: str  # character_visual | novel_cover
+    novel_id: str
+    character_id: str = ""
+    payload: Dict[str, object] = field(default_factory=dict)
+    created_at: str = ""
+    status: str = "queued"
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    return_code: Optional[int] = None
+    error: Optional[str] = None
+    result: Dict[str, object] = field(default_factory=dict)
+
+
+@dataclass
 class QueueTask:
     task_id: str
-    task_type: str  # "pipeline" | "ip"
+    task_type: str  # "pipeline" | "ip" | "visual"
 
 
 def _task_to_dict(task: TaskRuntime) -> dict:
@@ -72,6 +88,23 @@ def _ip_task_to_dict(task: IpTaskRuntime) -> dict:
         "novel_id": task.novel_id,
         "character_ids": task.character_ids,
         "force_regenerate": task.force_regenerate,
+        "status": task.status,
+        "created_at": task.created_at,
+        "started_at": task.started_at,
+        "finished_at": task.finished_at,
+        "return_code": task.return_code,
+        "error": task.error,
+        "result": task.result,
+    }
+
+
+def _visual_task_to_dict(task: VisualTaskRuntime) -> dict:
+    return {
+        "task_id": task.task_id,
+        "task_kind": task.task_kind,
+        "novel_id": task.novel_id,
+        "character_id": task.character_id,
+        "payload": task.payload,
         "status": task.status,
         "created_at": task.created_at,
         "started_at": task.started_at,

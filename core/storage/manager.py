@@ -177,6 +177,42 @@ class StorageManager:
         with open(self.config.index_file, "w", encoding=self.config.encoding) as f:
             json.dump(entries, f, ensure_ascii=self.config.ensure_ascii, indent=self.config.indent)
 
+    def reorder_novels(self, novel_ids: List[str]) -> int:
+        """按给定 novel_id 顺序重排索引并持久化，返回总条目数。"""
+        entries = self.list_novels()
+        if not entries:
+            return 0
+
+        by_id = {
+            str(item.get("novel_id") or "").strip(): item
+            for item in entries
+            if isinstance(item, dict) and str(item.get("novel_id") or "").strip()
+        }
+
+        ordered: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+
+        for raw_id in novel_ids:
+            nid = str(raw_id or "").strip()
+            if not nid or nid in seen:
+                continue
+            item = by_id.get(nid)
+            if item is not None:
+                ordered.append(item)
+                seen.add(nid)
+
+        # 保底：把请求里遗漏的小说按当前顺序追加，避免数据丢失。
+        for item in entries:
+            nid = str(item.get("novel_id") or "").strip()
+            if nid and nid not in seen:
+                ordered.append(item)
+                seen.add(nid)
+
+        with open(self.config.index_file, "w", encoding=self.config.encoding) as f:
+            json.dump(ordered, f, ensure_ascii=self.config.ensure_ascii, indent=self.config.indent)
+
+        return len(ordered)
+
     def rebuild_index(self) -> int:
         """重建索引（扫描 novels 目录）"""
         entries = []

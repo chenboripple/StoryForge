@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from core.config import get_config
 from core.models import Chapter, ChapterStatus, NovelMeta, PipelineStage
 from core.storage import StorageManager
 
@@ -107,20 +108,7 @@ async def upload_file(
     # 3. 检测上传类型
     upload_type = get_upload_type(filename)
 
-    # 4. 读取文件内容（安全方式）
-    content_bytes = await file.read()
-
-    # 二次检查文件大小
-    if not validate_file_size(len(content_bytes)):
-        from core.config import DEFAULT_MAX_UPLOAD_SIZE
-        cfg = get_config()
-        max_size = cfg.security.max_upload_size or DEFAULT_MAX_UPLOAD_SIZE
-        raise HTTPException(
-            status_code=413,
-            detail=f"文件过大，最大允许 {max_size // (1024*1024)}MB"
-        )
-
-    # 5. 保存到安全的临时位置
+    # 4. 保存到安全的临时位置，并流式写入防止单次大内存占用。
     safe_filename = sanitize_filename(filename)
     temp_dir = os.path.join(tempfile.gettempdir(), "storyforge_uploads")
     os.makedirs(temp_dir, mode=0o700, exist_ok=True)  # 仅用户可读写
@@ -131,10 +119,26 @@ async def upload_file(
     safe_filepath = os.path.join(temp_dir, f"{unique_id}_{safe_filename}")
 
     try:
-        with open(safe_filepath, "wb") as fout:
-            fout.write(content_bytes)
+        from core.config import DEFAULT_MAX_UPLOAD_SIZE
+        cfg = get_config()
+        max_size = cfg.security.max_upload_size or DEFAULT_MAX_UPLOAD_SIZE
 
-        # 6. 解析文件
+        total_size = 0
+        chunk_size = 1024 * 1024  # 1MB
+        with open(safe_filepath, "wb") as fout:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > max_size:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件过大，最大允许 {max_size // (1024*1024)}MB"
+                    )
+                fout.write(chunk)
+
+        # 5. 解析文件
         options: Dict[str, Any] = {}
         if chapter_pattern:
             options["chapter_pattern"] = chapter_pattern
@@ -191,7 +195,7 @@ async def upload_file(
             },
         }
     finally:
-        # 7. 清理临时文件
+        # 6. 清理临时文件
         try:
             os.unlink(safe_filepath)
         except Exception:

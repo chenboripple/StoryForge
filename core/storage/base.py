@@ -50,10 +50,8 @@ def _safe_novel_id(novel_id: str) -> str:
     if len(cleaned) > MAX_NOVEL_ID_LENGTH:
         cleaned = cleaned[:MAX_NOVEL_ID_LENGTH]
 
-    # 最终安全检查 - 确保只包含安全字符
-    if not SAFE_NOVEL_ID_PATTERN.match(cleaned):
-        # 替换所有不安全字符
-        cleaned = re.sub(r"[^a-zA-Z0-9_-]", "_", cleaned)
+    # 移除控制字符
+    cleaned = re.sub(r"[\x00-\x1F\x7F]", "_", cleaned)
 
     return cleaned
 

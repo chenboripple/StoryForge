@@ -288,8 +288,8 @@ def main(save_to_storage: bool = False):
         print(f"✅ 已保存小说：{result.novel_id}")
         print(f"   章节数：{len(chapters)}")
         print(f"   审稿记录：{sum(len(r.records) for r in reviews.values())} 条")
-        print(f"   可通过 FastAPI 网关查看：uvicorn web_console.app:app --reload --port 8787")
-        print(f"   API 端点：GET /api/novels/{result.novel_id}/chapters")
+        print(f"   可通过 FastAPI 网关查看：uvicorn web_console.app:app --reload --port 5089")
+        print(f"   API 端点：GET /api/v1/novels/{result.novel_id}/chapters")
 
 
 if __name__ == "__main__":

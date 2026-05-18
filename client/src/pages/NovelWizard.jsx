@@ -22,6 +22,7 @@ import {
   Tooltip,
   Row,
   Col,
+  Checkbox,
 } from "antd";
 import {
   RocketOutlined,
@@ -98,6 +99,7 @@ export default function NovelWizard() {
     target_word_count: 3000,
   });
   const [saving, setSaving] = useState(false);
+  const [autoGenerateFirstChapter, setAutoGenerateFirstChapter] = useState(true);
   const chatEndRef = useRef(null);
 
   // 自动滚动到聊天底部
@@ -122,7 +124,7 @@ export default function NovelWizard() {
 
     setAiLoading(true);
     try {
-      const resp = await fetch("/api/ai/generate", {
+      const resp = await fetch("/api/v1/ai/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -198,12 +200,22 @@ export default function NovelWizard() {
         genre: novelData.genre,
         concept: novelData.concept,
         target_word_count: novelData.target_word_count,
+        outline: novelData.outline || "",
+        characters: novelData.characters || [],
+        world_setting: novelData.world_setting || "",
       });
 
       if (createResult.success) {
-        // 保存大纲、角色、世界观等
-        // TODO: 添加保存这些内容的 API
-        message.success("小说创建成功！");
+        if (autoGenerateFirstChapter) {
+          try {
+            const submit = await api.generateNovelChapter(createResult.novel_id, { chapter_num: 1 });
+            message.success(`小说创建成功，已启动首章生成任务（${submit.task_id}）`);
+          } catch (genErr) {
+            message.warning(`小说创建成功，但首章任务启动失败：${genErr.message}`);
+          }
+        } else {
+          message.success("小说创建成功！");
+        }
         navigate(`/novels/${createResult.novel_id}`);
       } else {
         message.error(createResult.error || "创建失败");
@@ -456,6 +468,13 @@ export default function NovelWizard() {
               type="info"
               showIcon
             />
+
+            <Checkbox
+              checked={autoGenerateFirstChapter}
+              onChange={(e) => setAutoGenerateFirstChapter(e.target.checked)}
+            >
+              创建后自动生成第 1 章
+            </Checkbox>
           </Space>
         );
 

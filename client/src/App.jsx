@@ -16,6 +16,7 @@ import NovelImport from "./pages/NovelImport";
 import NovelWizard from "./pages/NovelWizard";
 import Extraction from "./pages/Extraction";
 import IPGeneration from "./pages/IPGeneration";
+import CharacterDetail from "./pages/CharacterDetail";
 
 const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
@@ -83,6 +84,10 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/novels" element={<NovelList />} />
               <Route path="/novels/:novelId" element={<NovelDetail />} />
+              <Route
+                path="/novels/:novelId/characters/:characterId"
+                element={<CharacterDetail />}
+              />
               <Route path="/wizard" element={<NovelWizard />} />
               <Route path="/extraction" element={<Extraction />} />
               <Route path="/ip-generation" element={<IPGeneration />} />

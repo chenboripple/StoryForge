@@ -10,7 +10,7 @@ npm install
 npm start
 ```
 
-开发模式默认在 http://localhost:3000，并通过 `package.json` 中的 `proxy` 把 `/api/*` 请求转发到 FastAPI 网关 (http://localhost:8787)。
+开发模式默认在 http://localhost:3000，并通过 `package.json` 中的 `proxy` 把 `/api/v1/*` 请求转发到 FastAPI 网关 (http://localhost:5089)。
 
 ## 构建
 

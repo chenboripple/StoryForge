@@ -1,16 +1,8 @@
-"""StoryForge 控制台 FastAPI 网关入口。
-
-职责仅限三件事：
-1. 实例化 FastAPI 应用，按领域聚合 router；
-2. 启动后台任务调度器（恢复状态、起 dispatcher 线程）；
-3. 把 client/build 的 React 产物挂到根路径（含 SPA fallback）。
-
-业务实现在 web_console.services；运行期状态在 web_console.runtime；
-路由按领域在 web_console.routes/*。
-"""
+"""StoryForge 控制台 FastAPI 网关入口（v1-only）。"""
 
 from __future__ import annotations
 
+import inspect
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,24 +19,22 @@ from web_console.runtime.registry import TaskRegistry
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理：启动时初始化，关闭时清理。"""
-    # 启动时
     cfg = get_config()
     storage_dir = Path(cfg.data_dir_abs)
     registry = TaskRegistry(storage_dir)
-
-    # 注册默认的 pipeline runner
-    from web_console.runtime.registry import TaskRegistry
 
     def run_task(task_id: str):
         registry._run_task(task_id)
 
     registry.register_runner("pipeline", run_task)
 
-    # 导入 ip services 来注册 ip runner
-    try:
-        import web_console.services.ip
-    except ImportError:
-        pass
+    # 注册 ip runner
+    from web_console.services.ip import register_ip_runner
+    register_ip_runner(registry)
+
+    # 注册 visual runner
+    from web_console.services.visual_tasks import register_visual_runner
+    register_visual_runner(registry)
 
     registry.load_state()
     registry.start_dispatcher()
@@ -53,7 +43,9 @@ async def lifespan(app: FastAPI):
     yield  # 应用运行
 
     # 关闭时
-    await app.state.task_registry.shutdown()
+    shutdown_result = app.state.task_registry.shutdown()
+    if inspect.isawaitable(shutdown_result):
+        await shutdown_result
 
 
 # 创建 FastAPI 应用
@@ -64,7 +56,6 @@ app = FastAPI(
     lifespan=lifespan,
     openapi_tags=[
         {"name": "v1", "description": "API v1 版本端点"},
-        {"name": "legacy", "description": "旧版 API（向后兼容）"},
         {"name": "health", "description": "健康检查端点"},
         {"name": "novels", "description": "小说管理端点"},
         {"name": "tasks", "description": "任务管理端点"},
@@ -76,21 +67,33 @@ app.add_middleware(RequestIdMiddleware)
 
 # CORS中间件配置
 cfg = get_config()
-if cfg.server.cors_origins:
-    # 配置了具体的允许域名
+cors_origins_cfg = cfg.server.cors_origins
+if isinstance(cors_origins_cfg, str):
+    # 兼容历史配置写法，避免将 "*" 误当作 list 使用。
+    if cors_origins_cfg.strip() == "*":
+        cors_origins = ["*"]
+    else:
+        cors_origins = [x.strip() for x in cors_origins_cfg.split(",") if x.strip()]
+elif isinstance(cors_origins_cfg, list):
+    cors_origins = cors_origins_cfg
+else:
+    cors_origins = []
+
+if cors_origins:
+    # 配置了允许域名
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cfg.server.cors_origins,
+        allow_origins=cors_origins,
         allow_credentials=cfg.server.cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 else:
-    # 保持旧行为：允许所有（兼容现有部署）
+    # 未配置时使用最小默认值（仅本地前端常见地址）。
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
+        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_credentials=cfg.server.cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -98,7 +101,7 @@ else:
 # 设置统一错误处理器
 setup_error_handlers(app)
 
-# 包含所有路由（版本化 + 向后兼容）
+# 仅包含 v1 路由
 app.include_router(api_router)
 
 # 前端静态文件托管
@@ -118,7 +121,6 @@ async def root():
             "expected_path": str(_CLIENT_INDEX),
             "api_versions": {
                 "v1": "/api/v1",
-                "legacy": "/api",
             },
             "docs": "/docs",
         },
@@ -127,21 +129,15 @@ async def root():
 
 @app.get("/api", include_in_schema=False)
 async def api_index():
-    """API 根路径，列出可用版本。"""
-    return {
-        "versions": {
-            "v1": {
-                "path": "/api/v1",
-                "status": "active",
-                "docs": "/api/v1/docs",
-            },
-            "legacy": {
-                "path": "/api",
-                "status": "deprecated",
-            },
+    """v1-only 模式下，/api 不再作为兼容入口。"""
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": "gone",
+            "message": "legacy API prefix removed; use /api/v1",
+            "docs": "/docs",
         },
-        "docs": "/docs",
-    }
+    )
 
 
 @app.get("/api/v1", include_in_schema=False)
@@ -154,6 +150,7 @@ async def api_v1_index():
             "health": "/api/v1/health",
             "config": "/api/v1/config",
             "novels": "/api/v1/novels",
+            "progressive": "/api/v1/novels/{novel_id}/proposals",
             "tasks": "/api/v1/tasks",
             "templates": "/api/v1/templates",
             "ai": "/api/v1/ai",
@@ -162,6 +159,25 @@ async def api_v1_index():
             "video": "/api/v1/video",
         },
     }
+
+
+@app.api_route(
+    "/api/{legacy_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    include_in_schema=False,
+)
+async def legacy_api_gone(legacy_path: str):
+    # /api/v1/* 交给已注册 v1 路由处理；这里只拦截历史路径并明确返回 410。
+    if legacy_path == "v1" or legacy_path.startswith("v1/"):
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": "gone",
+            "message": "legacy API path removed; use /api/v1/*",
+            "requested_path": f"/api/{legacy_path}",
+        },
+    )
 
 
 if _CLIENT_BUILD.exists():

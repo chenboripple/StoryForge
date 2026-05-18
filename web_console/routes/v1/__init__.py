@@ -12,6 +12,7 @@ from web_console.routes.v1 import (
     templates,
     tasks,
     novels,
+    progressive,
     import_,
     ip,
     video,
@@ -25,6 +26,7 @@ v1_router.include_router(ai.router)
 v1_router.include_router(templates.router)
 v1_router.include_router(tasks.router)
 v1_router.include_router(novels.router)
+v1_router.include_router(progressive.router)
 v1_router.include_router(import_.router)
 v1_router.include_router(ip.router)
 v1_router.include_router(video.router)

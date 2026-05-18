@@ -11,6 +11,8 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from core.config import get_config
+
 
 def _extract_request_id(request: Optional[Request]) -> Optional[str]:
     """从请求中提取 request_id（如果有）。"""
@@ -211,10 +213,15 @@ def setup_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
         """处理所有未捕获的异常"""
+        cfg = get_config()
+        details = []
+        if cfg.server.debug:
+            details.append(ErrorDetail(message=f"{exc.__class__.__name__}: {exc}"))
+
         error_resp = ErrorResponse(
             error_code=ErrorCode.UNKNOWN,
             message="An unexpected error occurred",
-            details=[ErrorDetail(message=str(exc))],
+            details=details,
             path=str(request.url.path),
             request_id=_extract_request_id(request),
         )

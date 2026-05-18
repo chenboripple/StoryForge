@@ -12,9 +12,11 @@ PID_FILE="$DEPLOY_DIR/server.pid"
 USER_CONFIG_DIR="$HOME/.storyforge"
 CONFIG_FILE="$USER_CONFIG_DIR/storyforge.yaml"
 CONFIG_EXAMPLE_MD="$PROJECT_ROOT/docs/config-example.md"
+LAUNCHD_LABEL="com.storyforge.webconsole"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
 
 # 默认端口（仅当读不到配置时使用）
-DEFAULT_PORT=8787
+DEFAULT_PORT=5089
 DEFAULT_HOST="0.0.0.0"
 
 RED="\033[31m"
@@ -27,6 +29,34 @@ log_info() { echo -e "${BLUE}[INFO]${RESET} $1"; }
 log_ok() { echo -e "${GREEN}[OK]${RESET} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${RESET} $1"; }
 log_error() { echo -e "${RED}[ERROR]${RESET} $1"; }
+
+is_launchd_loaded() {
+    launchctl list | grep -q "$LAUNCHD_LABEL" 2>/dev/null
+}
+
+cleanup_stale_pid() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$PID_FILE"
+            log_info "已清理失效 PID 文件: $PID_FILE"
+        fi
+    fi
+}
+
+stop_pid_file_process() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            sleep 1
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$PID_FILE"
+    fi
+}
 
 # 从 docs/config-example.md 提取 YAML 代码块
 _extract_example_yaml() {
@@ -250,6 +280,148 @@ show_logs() {
     fi
 }
 
+generate_launchd_plist() {
+    mkdir -p "$HOME/Library/LaunchAgents"
+    mkdirs
+    ensure_config
+
+    local host=$(read_config host "$DEFAULT_HOST")
+    local port=$(read_config port "$DEFAULT_PORT")
+
+    cat > "$LAUNCHD_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LAUNCHD_LABEL</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>$VENV_DIR/bin/gunicorn</string>
+    <string>-k</string>
+    <string>uvicorn.workers.UvicornWorker</string>
+    <string>-w</string>
+    <string>2</string>
+    <string>-b</string>
+    <string>$host:$port</string>
+    <string>web_console.app:app</string>
+    <string>--pid</string>
+    <string>$PID_FILE</string>
+    <string>--access-logfile</string>
+    <string>$LOG_DIR/access.log</string>
+    <string>--error-logfile</string>
+    <string>$LOG_DIR/error.log</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>$PROJECT_ROOT</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>$LOG_DIR/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>$LOG_DIR/launchd.err.log</string>
+</dict>
+</plist>
+EOF
+}
+
+install_persistent_service() {
+    mkdirs
+    ensure_config
+    cleanup_stale_pid
+    stop_pid_file_process
+
+    if [ ! -x "$VENV_DIR/bin/gunicorn" ]; then
+        log_info "未检测到可用 gunicorn，先安装 Python 依赖..."
+        install_python
+    fi
+
+    generate_launchd_plist
+
+    launchctl stop "$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
+    launchctl load -w "$LAUNCHD_PLIST"
+
+    log_ok "已安装并加载常驻服务: $LAUNCHD_LABEL"
+    log_info "launchd 配置: $LAUNCHD_PLIST"
+    log_info "服务将随登录自动启动，且不会因 VS Code 关闭而停止"
+}
+
+uninstall_persistent_service() {
+    launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
+    rm -f "$LAUNCHD_PLIST"
+    log_ok "已卸载常驻服务: $LAUNCHD_LABEL"
+}
+
+start_persistent_service() {
+    if [ ! -f "$LAUNCHD_PLIST" ]; then
+        log_error "未找到 launchd 配置，请先执行: ./deploy.sh service-install"
+        return 1
+    fi
+
+    cleanup_stale_pid
+
+    if ! is_launchd_loaded; then
+        launchctl load -w "$LAUNCHD_PLIST"
+    fi
+
+    launchctl start "$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    log_ok "常驻服务启动命令已发送"
+}
+
+stop_persistent_service() {
+    launchctl stop "$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
+    stop_pid_file_process
+    log_ok "常驻服务已停止并卸载（配置文件保留）"
+}
+
+show_service_status() {
+    echo "========================================"
+    echo "     StoryForge 常驻服务状态"
+    echo "========================================"
+    echo "服务名: $LAUNCHD_LABEL"
+    echo "配置文件: $LAUNCHD_PLIST"
+
+    if [ -f "$LAUNCHD_PLIST" ]; then
+        log_ok "launchd 配置: 已存在"
+    else
+        log_warn "launchd 配置: 不存在"
+    fi
+
+    if is_launchd_loaded; then
+        log_ok "加载状态: 已加载"
+    else
+        log_warn "加载状态: 未加载"
+    fi
+
+    local port=$(read_config port "$DEFAULT_PORT")
+    if command -v lsof >/dev/null 2>&1 && lsof -ti :$port >/dev/null 2>&1; then
+        log_ok "端口 $port: 已监听"
+        echo "访问地址: http://localhost:$port"
+    else
+        log_warn "端口 $port: 未监听"
+    fi
+
+    echo "日志: $LOG_DIR/launchd.out.log"
+    echo "日志: $LOG_DIR/launchd.err.log"
+    echo "========================================"
+}
+
 # 完整部署流程
 full_deploy() {
     log_info "========================================"
@@ -288,6 +460,11 @@ StoryForge 部署脚本
   logs access  - 查看访问日志
   logs all     - 查看所有日志
   config     - 查看当前配置
+    service-install   - 安装并加载 macOS 常驻服务（launchd）
+    service-start     - 启动 macOS 常驻服务
+    service-stop      - 停止并卸载 macOS 常驻服务
+    service-uninstall - 卸载 macOS 常驻服务配置
+    service-status    - 查看 macOS 常驻服务状态
   deploy     - 完整部署 (install + build + restart，默认)
 
 EOF
@@ -342,6 +519,21 @@ main() {
             ;;
         config)
             show_config
+            ;;
+        service-install)
+            install_persistent_service
+            ;;
+        service-start)
+            start_persistent_service
+            ;;
+        service-stop)
+            stop_persistent_service
+            ;;
+        service-uninstall)
+            uninstall_persistent_service
+            ;;
+        service-status)
+            show_service_status
             ;;
         deploy)
             full_deploy

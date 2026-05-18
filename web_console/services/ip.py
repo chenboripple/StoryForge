@@ -9,12 +9,7 @@ from typing import List
 from core.storage import StorageManager
 
 from web_console.dependencies import _new_storage_manager
-from web_console.runtime.queue import (
-    IP_TASKS,
-    TASK_LOCK,
-    _save_runtime_state_unlocked,
-    register_runner,
-)
+from web_console.runtime.registry import TaskRegistry
 from web_console.services.novels import _extract_chapter_text, _split_sentences
 from web_console.services.vector import (
     _hash_vector,
@@ -80,9 +75,9 @@ def _generate_character_ip(snapshot: dict, novel_id: str, novel_title: str, char
     }
 
 
-def _run_ip_task(task_id: str) -> None:
-    with TASK_LOCK:
-        task = IP_TASKS[task_id]
+def _run_ip_task(task_id: str, registry: TaskRegistry) -> None:
+    with registry.task_lock:
+        task = registry.ip_tasks[task_id]
         if task.started_at is None:
             task.started_at = _now()
 
@@ -144,7 +139,7 @@ def _run_ip_task(task_id: str) -> None:
 
         upserted = _upsert_vector_docs(task.project_dir, vector_docs) if vector_docs else 0
 
-        with TASK_LOCK:
+        with registry.task_lock:
             task.result = {
                 "novel_id": task.novel_id,
                 "character_count": len(task.character_ids),
@@ -154,17 +149,23 @@ def _run_ip_task(task_id: str) -> None:
             }
             task.return_code = 0
             task.status = "success"
-            _save_runtime_state_unlocked()
+            registry._save_state_unlocked()
     except Exception as exc:
-        with TASK_LOCK:
+        with registry.task_lock:
             task.error = str(exc)
             task.return_code = 1
             task.status = "failed"
-            _save_runtime_state_unlocked()
+            registry._save_state_unlocked()
     finally:
-        with TASK_LOCK:
+        with registry.task_lock:
             task.finished_at = _now()
-            _save_runtime_state_unlocked()
+            registry._save_state_unlocked()
 
 
-register_runner("ip", _run_ip_task)
+def register_ip_runner(registry: TaskRegistry) -> None:
+    """将 IP 任务执行器注册到指定 TaskRegistry。"""
+
+    def _runner(task_id: str) -> None:
+        _run_ip_task(task_id, registry)
+
+    registry.register_runner("ip", _runner)
