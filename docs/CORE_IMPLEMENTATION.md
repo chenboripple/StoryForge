@@ -104,6 +104,6 @@ StoryForge/
 ## 注意事项
 
 1. 核心功能都已实现占位符逻辑（即使没有 LLM 也不会崩溃）
-2. `OutlineGenerator` 在 `stages/outline/` 是完整实现，保留 `core/outline.py` 作为兼容接口
+2. `OutlineGenerator` 与 `ProgressivePlanner` 位于 `stages/outline/`，由 Pipeline 直接调用
 3. IP 生成器默认输出到 `./ip_assets` 目录
 4. 检查点仍然保存到 `./checkpoints` 目录

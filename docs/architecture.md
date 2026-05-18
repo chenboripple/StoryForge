@@ -11,44 +11,45 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  web_console/  (FastAPI, 端口 5089)                                 │
 │  - routes/v1/ 仅保留 v1 APIRouter（/api/v1/）                       │
 │  - routes/__init__.py 路由聚合入口（v1-only）                        │
-│  - services/ 业务实现（ip / video / vector / novels）               │
+│  - services/ 业务实现（novels / ip / video / progressive / visuals）│
 │  - runtime/  TaskRegistry（任务队列、状态持久化）、模板白名单       │
 │  - middleware/ 统一错误处理、请求 ID、CORS                          │
 │  - security.py  上传安全、路径安全                                  │
 │  - app.py    实例化 + include_router + React 构建产物静态托管       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         存储层                                       │
-│  - ~/.storyforge/data/  (小说数据, YAML 配置决定)                    │
-│  - local_store/vector_store.jsonl  (向量库)                         │
-│  - local_store/ip_assets/  (IP 资产)                                │
-│  - debug_output/  (调试输出)                                        │
-│  - video_assets/  (视频生成中间产物：剧本、视觉圣经、渲染计划、检查报告) │
+│  - ~/.storyforge/data/index.json  (小说清单索引)                     │
+│  - ~/.storyforge/data/novels/{novel_id}/  (按小说分目录存储 JSON)    │
+│  - 每本小说按文件拆分保存 meta/outline/chapters/reviews/video 等数据 │
+│  - debug.output_dir  (调试输出目录，默认 debug_output/)              │
 ├─────────────────────────────────────────────────────────────────────┤
 │                       Pipeline 层 (LangGraph)                         │
 ┌─────────────────────────────────────────────────────────────────────┐
-│  创作阶段：outline_refiner → writer → reviewer → reviser → proofread │
+│  创作阶段：volume_planner → chapter_planner → writer → reviewer → reviser → proofreader │
+│  反馈阶段：feedback_synthesizer  (回写 chapter brief / 生成提案)     │
 │  萃取阶段：knowledge_extractor  (从章节提取知识 → memory)            │
-│  IP 阶段：ip_designer  (生成 story bible + 人物 IP)                  │
+│  IP 阶段：ip_designer  (生成 story bible)                            │
 │  视频阶段（可选）：video_script → visual_bible → video_assets → video_consistency → video_generate │
 │  支持：checkpoint 断点续跑、条件路由、AI 味检测                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Agent 层                                      │
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Writer(墨川) | Reviewer(青锋) | Reviser(墨川) | Proofreader(砚清)  │
-│  支持：MessageBus (Agent 间通讯)、memory、JSON 结构化输出            │
+│  支持：MessageBus (Agent 间通讯)、state 消息持久化、JSON 结构化输出  │
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Core 层                                       │
 ┌─────────────────────────────────────────────────────────────────────┐
 │  core/models/content/   NovelMeta, Chapter, Outline, Review, Proofread│
-│  core/models/world/     Characters, WorldSetting                    │
-│  core/models/agent/     BaseAgent, AgentPersona, MessageBus         │
-│  core/models/extraction/  KnowledgeExtractor, ChapterAnalysis       │
-│  core/models/ip/        IPAssets, StoryBible                       │
+│  core/models/world/     Character, CharacterGraph, WorldSetting     │
+│  core/models/agent/     AgentMessage, RoutingSuggestion             │
+│  core/models/extraction/ ChapterAnalysis 等萃取结果模型             │
+│  core/models/ip/        CharacterIP, StoryBible                    │
 │  core/models/video/     VideoScript, VisualBible, ConsistencyReport│
+│  core/agent.py          BaseAgent, AgentPersona, MessageBus         │
 │  core/config.py         ~/.storyforge/storyforge.yaml  (全系统配置) │
 ├─────────────────────────────────────────────────────────────────────┤
 │                       stages/ 模块                                   │
-│  stages/outline/         OutlineGenerator (章级细纲生成)            │
+│  stages/outline/         OutlineGenerator / ProgressivePlanner      │
 │  stages/extraction/      KnowledgeExtractor (知识萃取)              │
 │  stages/ip_generation/   IPGenerator (IP 资产生成)                 │
 └─────────────────────────────────────────────────────────────────────┘
@@ -117,6 +118,7 @@ debug:
 
 - `tasks` - Pipeline 任务运行时
 - `ip_tasks` - IP 生成任务运行时
+- `visual_tasks` - 角色形象/封面视觉任务运行时
 - `task_queue` - 任务队列
 - `task_runners` - 任务执行器注册表
 
@@ -183,11 +185,13 @@ debug:
 
 ### 阶段一：创作 (Creation)
 
-1. **大纲细化** (outline_refiner)：从卷纲生成章级细纲
-2. **写作** (writer)：基于细纲创作章节
-3. **审稿** (reviewer)：8维度结构化评分 + AI味评估
-4. **修改** (reviser)：根据审稿意见修改
-5. **校对** (proofreader)：6层级检查 + 终审判定（可发布/可交付/需返修）
+1. **卷规划** (volume_planner)：按章节所在卷生成/更新 volume brief
+2. **章规划** (chapter_planner)：基于卷规划生成当前章 brief
+3. **写作** (writer)：基于 brief 创作章节
+4. **审稿** (reviewer)：结构化评分
+5. **修改** (reviser)：根据审稿意见修改
+6. **校对** (proofreader)：6层级检查 + 终审判定
+7. **反馈综合** (feedback_synthesizer)：回写 brief 并生成跨层 proposal
 
 ### 阶段二：萃取 (Extraction)
 

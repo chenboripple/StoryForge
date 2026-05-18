@@ -270,10 +270,19 @@ llm:
 **目录结构**：
 ```
 ~/.storyforge/data/
-├── index.json         # 小说清单索引
+├── index.json
 └── novels/
-    ├── demo_001.json  # 单个小说完整状态
-    └── demo_002.json
+    └── demo_001/
+        ├── novel_meta.json
+        ├── outline.json
+        ├── characters.json
+        ├── world_setting.json
+        ├── chapters.json
+        ├── reviews.json
+        ├── proofreads.json
+        ├── chapter_analyses.json
+        ├── story_bible.json
+        └── ...
 ```
 
 ---
@@ -296,6 +305,20 @@ llm:
 |------|------|--------|
 | `pipeline.max_review_rounds` | 最大审稿轮次 | `3` |
 | `pipeline.default_target_word_count` | 默认单章字数目标 | `3000` |
+
+### 控制台配置 (`console.*`)
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `console.max_running_tasks` | 控制台任务并发上限 | `3` |
+| `console.default_command` | 默认允许的 pipeline 命令模板 | `python examples/demo_pipeline.py` |
+| `console.template_file` | 命令模板存储文件 | `~/.storyforge/templates.yaml` |
+
+### 调试配置 (`debug.*`)
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `debug.output_dir` | 调试输出目录 | `debug_output` |
 
 ---
 

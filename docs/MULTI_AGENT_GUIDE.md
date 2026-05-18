@@ -49,8 +49,7 @@ for suggestion in result.routing_suggestions:
 ```python
 pipeline = create_pipeline(
     llm_client=your_llm,
-    use_agent_routing=True, # 启用自主路由
-    min_confidence=0.7 # 置信度阈值
+    use_agent_routing=True # 预留开关，当前实现仍以内建路由为主
 )
 ```
 
@@ -69,7 +68,7 @@ Agent 自主路由的工作流程：
 
 1. **Agent 发布建议** - Reviewer/Proofreader 完成任务后发布路由建议
 2. **建议存入 state** - 路由建议保存在 `state.routing_suggestions` 中
-3. **Pipeline 决策** - 根据 `use_agent_routing` 标志决定是否采用
+3. **Pipeline 记录** - 当前实现会把建议写入 `state.routing_suggestions`，供调试与后续演进使用
 
 ```python
 # Agent 代码示例
@@ -143,13 +142,9 @@ messages = self.get_messages_from_state(
    - 不使用路由建议决策，但生成并保存它们
    - 对比路由建议与实际 Pipeline 决策
 
-3. **阶段 3** - 混合路由（低置信度）
-   - `use_agent_routing=True`, `min_confidence=0.9`
-   - 只采用极高置信度的建议
-
-4. **阶段 4** - 完全自主路由
-   - `min_confidence=0.7`
-   - Agent 完全掌控路由决策
+3. **阶段 3** - 接入真实路由决策
+    - 在 `pipeline/novel_pipeline.py` 中消费 `routing_suggestions`
+    - 再为不同置信度定义采用策略
 
 ## 示例
 
@@ -165,7 +160,7 @@ python3 examples/multi_agent_demo.py --agent-routing
 
 ## 回退策略
 
-当 Agent 没有提供路由建议，或置信度不足时，Pipeline 会回退到原有的路由逻辑：
+当前代码路径中，Pipeline 仍使用原有路由逻辑；路由建议主要用于观测与调试：
 
 1. Reviewer 路由：基于 `verdict` 和 `ai_flavor_level`
 2. Proofreader 路由：基于终审结果和审稿轮次
@@ -218,11 +213,11 @@ A: `result.agent_messages` 包含所有消息历史。
 
 ### Q: Agent 建议的路由优先级如何确定？
 
-A: 按置信度降序，相同置信度按时间降序（最新的优先）。
+A: 当前实现仅记录建议，还没有在 Pipeline 中做统一排序和采用。
 
 ### Q: 是否可以禁用 MessageBus 但保留路由建议？
 
-A: 不可以，建议路由通过 MessageBus 发送。但你可以设置 `use_agent_routing=False` 来忽略建议。
+A: 可以。`publish_message()` 会优先走 MessageBus，同时也会把消息/建议持久化到 `NovelState`。
 
 ### Q: 路由建议的置信度如何计算？
 

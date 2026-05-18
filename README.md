@@ -1,11 +1,13 @@
 <p align="center">
   <h1 align="center">StoryForge</h1>
   <p align="center">
-    用 AI 创作、打磨、衍生你的小说世界
+    把写作、审稿、校对、知识萃取与 IP 衍生串成一条可运行的小说流水线
     <br />
     <a href="#-快速开始"><strong>快速开始 »</strong></a>
     <br />
     <br />
+    <a href="#-为什么它更像创作工作台">为什么它更像创作工作台</a>
+    ·
     <a href="#-核心特性">核心特性</a>
     ·
     <a href="#-使用场景">使用场景</a>
@@ -16,22 +18,28 @@
 
 ---
 
-## ✨ 为什么选择 StoryForge？
+## ✨ 为什么它更像创作工作台
 
-StoryForge 是一个多 Agent 小说创作平台，让 AI 像真实的创作团队一样工作：
+StoryForge 不是单次 Prompt 包装器，而是一个围绕小说生产流程搭起来的多 Agent 工作台。它把规划、写作、审稿、修改、校对、知识萃取、角色视觉生成和 Web 控制台放进同一个项目里，让你既能跑脚本，也能通过界面管理整部作品。
 
-- 🎭 **四个专业角色** - 作家、编辑、修改、校对各司其职
-- 🔄 **审稿-修改闭环** - AI 自动审稿、给出修改意见、反复打磨
-- 🧠 **记忆与一致性** - 自动追踪人物、时间线、世界观，防止穿帮
-- 🎨 **IP 衍生能力** - 自动提取设定、生成人物卡、故事 bible
-- 🎬 **视频剧本生成** - 从小说到镜头剧本的一键转换（实验性）
-- 🖥️ **直观的 Web 界面** - 查看创作进度、管理小说、导入已有作品
+你能直接得到这些能力：
+
+- 🎭 **多 Agent 创作闭环**：Writer、Reviewer、Reviser、Proofreader 串成可执行流程，不是分散脚本。
+- 🔁 **从写到改的真实循环**：章节会经历审稿、返修、校对，再进入萃取和 IP 生成。
+- 🧠 **分层规划 + 一致性控制**：支持 volume brief、chapter brief、上下文预算、提案回写。
+- 🖥️ **可用的 Web Console**：创建小说、导入文本、发起章节任务、查看封面和角色视觉档案。
+- 🎨 **角色与封面视觉生成**：主形象、艺术照、视频立体图、小说封面都已接入任务系统。
+- 🎬 **视频链路预留**：镜头剧本、视觉圣经、一致性检查和视频生成节点已在 Pipeline 中接好。
+
+一条典型链路如下：
+
+`volume_planner -> chapter_planner -> writer -> reviewer -> reviser -> proofreader -> feedback_synthesizer -> knowledge_extractor -> ip_designer`
 
 ---
 
 ## 🚀 快速开始
 
-### 三分钟上手
+### 路线 A：先跑通 CLI Pipeline
 
 ```bash
 # 1. 克隆项目
@@ -45,6 +53,8 @@ pip install -r requirements.txt
 python examples/debug_pipeline.py
 ```
 
+这条路线适合先确认核心 Pipeline 能跑通。默认使用 `mock` 配置，不需要 API Key。
+
 ### 配置真实 LLM
 
 编辑 `~/.storyforge/storyforge.yaml`：
@@ -56,7 +66,9 @@ llm:
     api_key: "your-api-key-here"
 ```
 
-### 启动 Web 界面
+更多配置项见 [docs/config.md](docs/config.md) 和 [docs/config-example.md](docs/config-example.md)。
+
+### 路线 B：启动 Web Console
 
 ```bash
 # 安装前端依赖并构建
@@ -73,11 +85,30 @@ uvicorn web_console.app:app --reload --port 5089
 ./deploy.sh service-status
 ```
 
-然后访问 `http://127.0.0.1:5089`
+然后访问 `http://127.0.0.1:5089`。
+
+Web Console 当前可以做这些事：
+
+- 创建小说、重排小说、查看章节与上下文
+- 导入 `txt/md`、EPUB、PDF、图片 OCR
+- 提交章节生成、章节返修、章节/卷/全书校对任务
+- 查看角色列表、小说封面、角色视觉档案
+- 查看 proposals 和 context decisions 等调试信息
 
 ---
 
 ## 🎯 核心特性
+
+### 一眼看懂
+
+| 能力 | 当前实现 | 你能拿它做什么 |
+|------|----------|----------------|
+| 创作 Pipeline | LangGraph 工作流 + checkpoint | 让章节生成、审稿、返修、校对串起来 |
+| 多 Agent 协作 | MessageBus + state 持久化 | 记录角色间消息和路由建议 |
+| 分层规划 | volume brief / chapter brief | 让长篇写作不只依赖单次上下文 |
+| Web Console | FastAPI + React | 管理小说、任务和导入流程 |
+| 视觉生成 | 封面 + 角色 main/gallery/video | 扩展角色资产与展示物料 |
+| IP / 视频衍生 | story bible + 视频节点 | 为后续改编保留结构化产物 |
 
 ### 🎭 多 Agent 协作
 
@@ -87,7 +118,7 @@ uvicorn web_console.app:app --reload --port 5089
 |------|------|------|
 | **墨川** | 冷峻理性，物理背景 | 小说创作 |
 | **青锋** | 犀利直接，20年经验 | 结构化审稿 |
-| **墨川** (Reviser) | - | 根据意见修改 |
+| **墨川** (Reviser) | 冷峻理性，擅长返工修稿 | 根据意见修改 |
 | **砚清** | 严谨细致，处女座 | 6层级校对 + 终审 |
 
 ### 📝 8维度结构化审稿
@@ -128,6 +159,12 @@ uvicorn web_console.app:app --reload --port 5089
 - 生成故事 bible（设定集）
 - 生成人物 IP 资产（人设、台词、画像提示词）
 
+### 🖥️ Web Console 与任务系统
+
+- 统一使用 `/api/v1/*` 路由
+- 章节生成、校对、视觉生成走任务队列，便于追踪状态
+- 已实现角色视觉档案、小说封面、导入解析、模板命令管理
+
 ---
 
 ## 💡 使用场景
@@ -135,12 +172,20 @@ uvicorn web_console.app:app --reload --port 5089
 ### 1. 从零开始创作
 
 ```python
+from core.state import NovelState
 from pipeline.novel_pipeline import create_pipeline
 
-# 配置 Pipeline
 pipeline = create_pipeline(llm_client=my_llm)
 
-# 创作你的第一部小说
+initial_state = NovelState(
+  novel_id="demo_001",
+  novel_title="熵塔",
+  genre="科幻末日",
+  concept="末日后的城市废墟中出现了一段神秘信号",
+  outline="第一卷：信号。主角在废墟中发现异样广播，决定出发追查来源。",
+  current_chapter=1,
+)
+
 result = pipeline.run(initial_state)
 ```
 
@@ -161,7 +206,15 @@ results = pipeline.run_batch(state, chapters=[1, 2, 3, 4, 5])
 
 ### 4. AI 辅助审稿与润色
 
-已有初稿？让 StoryForge 帮你审稿、修改、校对。
+已有初稿？让 StoryForge 帮你审稿、修改、校对，再把结果回写到后续规划中。
+
+### 5. 角色视觉与封面生产
+
+在 Web Console 中为小说生成封面，并为角色生成：
+
+- `main` 主形象
+- `gallery` 艺术照
+- `video` 多视角参考图
 
 ---
 
@@ -170,7 +223,9 @@ results = pipeline.run_batch(state, chapters=[1, 2, 3, 4, 5])
 - 🏗️ [架构设计](docs/architecture.md) - 了解系统架构
 - 🔄 [Pipeline 详解](docs/pipeline.md) - 深入理解创作流程
 - 🤖 [多 Agent 指南](docs/MULTI_AGENT_GUIDE.md) - 玩转多 Agent 协作
+- 🎨 [角色视觉生成](docs/CHARACTER_VISUAL_GENERATION.md) - 查看视觉生成约束与 API
 - 📡 [API 参考](docs/api-reference.md) - 完整的 API 文档
+- ⚙️ [配置说明](docs/config.md) - 配置文件结构与字段解释
 
 ---
 
@@ -181,10 +236,11 @@ StoryForge/
 ├── core/                   # 核心模块
 │   ├── models/             # 数据模型（按领域分组）
 │   ├── config.py           # 配置管理
-│   └── storage/            # 存储管理
+│   ├── storage/            # 存储管理
+│   └── state.py            # Pipeline 运行态
 ├── agents/                 # Agent 角色定义
 ├── pipeline/               # LangGraph 流程编排
-├── stages/                 # 功能模块（大纲/萃取/IP生成）
+├── stages/                 # 功能模块（规划/萃取/IP/视频）
 ├── client/                 # React 前端
 ├── web_console/            # FastAPI 后端
 │   ├── app.py              # 应用入口 + 生命周期管理
@@ -194,6 +250,14 @@ StoryForge/
 │   └── middleware/         # 中间件
 └── examples/               # 示例脚本
 ```
+
+如果你更关注实现入口，通常从这些文件开始读：
+
+- `pipeline/novel_pipeline.py`
+- `agents/creation_agents.py`
+- `web_console/app.py`
+- `web_console/routes/v1/`
+- `core/state.py`
 
 ---
 

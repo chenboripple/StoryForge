@@ -2,49 +2,59 @@
 
 ## Core 模型 (core/models/)
 
-数据模型按领域分组：
+数据模型按领域分组，并统一从 `core.models` 重新导出。
 
-### `core/models/content/` - 内容相关模型
+### `core/models/content/` - 创作相关模型
 
 ```python
 from core.models import (
     NovelMeta, PipelineStage,
     Outline, ChapterOutline, VolumeOutline,
     Chapter, ChapterStatus,
-    ReviewRecord, ProofreadRecord
+    Review, ReviewRecord,
+    Proofread, ProofreadRecord,
 )
 ```
 
 ### `core/models/world/` - 世界设定模型
 
 ```python
-from core.models import CharacterInfo, WorldSetting
+from core.models import Character, CharacterGraph, WorldSetting
 ```
 
-### `core/models/agent/` - Agent 相关模型
+### `core/models/agent/` - Agent 通信模型
 
 ```python
-from core.models import AgentPersona, AgentMessage, MessageBus
+from core.models import AgentMessage, RoutingSuggestion
 ```
 
 ### `core/models/extraction/` - 萃取相关模型
 
 ```python
-from core.models import ChapterAnalysis, StoryEvent, CharacterArc, WorldState, Inconsistency, StoryMemory
+from core.models import (
+    ChapterAnalysis,
+    ExtractedEntity,
+    ExtractedCharacter,
+    ExtractedLocation,
+    ExtractedForeshadowing,
+    CharacterUpdate,
+    WorldUpdate,
+)
 ```
 
 ### `core/models/ip/` - IP 相关模型
 
 ```python
-from core.models import IPAssets, StoryBible
+from core.models import CharacterIP, StoryBible
 ```
 
 ### `core/models/video/` - 视频相关模型
 
 ```python
 from core.models import (
-    VideoScript, VisualBible, VideoRenderPlan,
-    VideoOutput, ConsistencyReport
+    VideoScript, VisualBible, AssetManifest,
+    VideoRenderPlan, ConsistencyReport,
+    VideoOutput, VideoState,
 )
 ```
 
@@ -79,13 +89,21 @@ config.console.max_running_tasks   # 控制台配置
 └── novels/
     └── {novel_id}/       # 单本小说目录
         ├── novel_meta.json
+    ├── outline.json
+    ├── characters.json
+    ├── world_setting.json
         ├── chapters.json
         ├── reviews.json
+    ├── proofreads.json
+    ├── chapter_analyses.json
+    ├── story_bible.json
+    ├── video_state.json
         ├── video_script.json                # 镜头剧本
         ├── visual_bible.json                # 视觉圣经 / 人物视觉档
-        ├── video_render_plan.json           # 渲染计划
-        ├── video_output.json                # 最终输出元数据
+    ├── video_manifest.json              # 视频资产索引
         ├── video_consistency_report.json    # 一致性检查报告
+    ├── video_render_plan.json           # 渲染计划
+    ├── video_output.json                # 最终输出元数据
         └── ...
 ```
 
@@ -119,13 +137,21 @@ sm.delete_novel(novel_id)
 | `/api/v1/config` | GET | 配置摘要 |
 | `/api/v1/novels` | GET | 小说清单 |
 | `/api/v1/novels` | POST | 创建小说 |
+| `/api/v1/novels/reorder` | POST | 重排小说列表顺序 |
 | `/api/v1/novels/{novel_id}` | GET | 单个小说完整状态 |
+| `/api/v1/novels/{novel_id}/context` | GET | 小说大纲/世界观/时间线上下文 |
 | `/api/v1/novels/{novel_id}/chapters` | GET | 章节列表 |
 | `/api/v1/novels/{novel_id}/chapters/{chapter_num}` | GET | 章节内容 + 审稿/校对 |
 | `/api/v1/novels/{novel_id}/characters` | GET | 小说角色列表（需 project_dir） |
+| `/api/v1/novels/{novel_id}/cover` | GET | 小说封面资料 |
+| `/api/v1/novels/{novel_id}/cover/generate` | POST | 生成小说封面（异步视觉任务） |
 | `/api/v1/novels/{novel_id}/characters/{character_id}/visuals` | GET | 角色形象档案（主形象/艺术照/视频立体图） |
-| `/api/v1/novels/{novel_id}/characters/{character_id}/visuals/generate` | POST | 生成角色图片（支持 main/gallery/video） |
+| `/api/v1/novels/{novel_id}/characters/{character_id}/visuals/generate` | POST | 提交角色图片生成任务（支持 main/gallery/video） |
 | `/api/v1/novels/{novel_id}/characters/{character_id}/visuals/finalize` | POST | 设置/取消角色形象定稿 |
+| `/api/v1/novels/{novel_id}/chapters/generate` | POST | 生成指定章节 |
+| `/api/v1/novels/{novel_id}/chapters/next` | POST | 生成当前下一章 |
+| `/api/v1/novels/{novel_id}/chapters/{chapter_num}/revise` | POST | 重新生成指定章节 |
+| `/api/v1/novels/{novel_id}/chapters/proofread` | POST | 提交章节/卷/全书校对任务 |
 | `/api/v1/novels/{novel_id}/proposals` | GET | 渐进式披露提案列表 |
 | `/api/v1/novels/{novel_id}/context-decisions` | GET | 上下文加载决策日志 |
 | `/api/v1/tasks` | GET | 任务列表 |
@@ -189,13 +215,13 @@ sm.delete_novel(novel_id)
 ]
 ```
 
-说明：当传入 `project_dir` 查询参数时，返回形态为 `{ "novels": [...] }`。
+说明：当传入 `project_dir` 查询参数时，返回形态为 `{ "novels": [...] }`，并包含项目目录下可发现的角色等扩展信息。
 
 ### `GET /api/v1/novels/{novel_id}`
 
-返回单个小说的完整状态。
+返回单个小说的索引信息与角色列表。
 
-**响应**：完整小说元数据 + 章节列表
+**响应**：`NovelMeta.to_index_entry()` 结果 + `characters`
 
 **错误**：
 | 状态码 | 说明 |
@@ -231,7 +257,7 @@ sm.delete_novel(novel_id)
 
 #### `POST /api/v1/novels/{novel_id}/characters/{character_id}/visuals/generate`
 
-按槽位生成角色图片。
+提交角色图片生成任务。实际生成在视觉任务 worker 中异步执行，可通过 `GET /api/v1/tasks/{task_id}` 追踪，并通过 `GET /api/v1/novels/{novel_id}/characters/{character_id}/visuals` 读取最终资料。
 
 **请求体**：
 
@@ -256,6 +282,18 @@ sm.delete_novel(novel_id)
 - `gallery` 和 `video` 生成前必须已有 `main_image`
 - `video` 全量重生成时会输出固定视角图片集合
 
+**响应**：
+
+```json
+{
+    "task_id": "7a8c...",
+    "status": "queued",
+    "task_kind": "character_visual",
+    "novel_id": "demo_001",
+    "character_id": "char_001"
+}
+```
+
 #### `POST /api/v1/novels/{novel_id}/characters/{character_id}/visuals/finalize`
 
 设置角色形象定稿状态。
@@ -268,11 +306,62 @@ sm.delete_novel(novel_id)
 }
 ```
 
+### 小说封面端点
+
+#### `GET /api/v1/novels/{novel_id}/cover`
+
+返回当前小说封面资料；若尚未生成，返回空封面结构。
+
+#### `POST /api/v1/novels/{novel_id}/cover/generate`
+
+提交小说封面生成任务。
+
+**响应**：
+
+```json
+{
+    "task_id": "4d5e...",
+    "status": "queued",
+    "task_kind": "novel_cover",
+    "novel_id": "demo_001"
+}
+```
+
+### 章节任务端点
+
+#### `POST /api/v1/novels/{novel_id}/chapters/generate`
+
+提交指定章节生成任务。若请求体未提供 `chapter_num`，默认使用小说当前章节。
+
+#### `POST /api/v1/novels/{novel_id}/chapters/next`
+
+按当前 `meta.current_chapter` 提交下一章生成任务。
+
+#### `POST /api/v1/novels/{novel_id}/chapters/{chapter_num}/revise`
+
+为指定章节重新提交生成/修订任务。
+
+#### `POST /api/v1/novels/{novel_id}/chapters/proofread`
+
+提交校对任务。
+
+**请求体**：
+
+```json
+{
+    "scope": "chapter",
+    "chapter_num": 3,
+    "volume_num": null
+}
+```
+
+其中 `scope` 仅支持 `chapter | volume | book`。
+
 ### 任务端点
 
 #### `POST /api/v1/tasks`
 
-启动新任务（pipeline 或 ip）。
+启动新任务（`pipeline` 或 `ip`）。视觉任务不通过该端点创建，而是由小说封面/角色形象端点提交。
 
 约束与校验：
 - `project_dir` 必须存在，且不能是文件系统根目录 `/`
@@ -292,6 +381,10 @@ sm.delete_novel(novel_id)
 #### `GET /api/v1/tasks/{task_id}`
 
 获取任务详情，包含日志尾巴。
+
+#### `GET /api/v1/tasks`
+
+返回三组任务：`tasks`、`ip_tasks`、`visual_tasks`。
 
 #### `POST /api/v1/tasks/{task_id}/stop`
 
@@ -313,6 +406,25 @@ sm.delete_novel(novel_id)
 #### `POST /api/v1/import/save`
 
 保存解析后的内容为新小说。
+
+### 健康与配置端点
+
+#### `GET /api/v1/health`
+
+返回服务状态、配置路径、数据目录和任务队列长度。
+
+#### `GET /api/v1/config`
+
+返回控制台任务并发配置摘要：
+
+```json
+{
+    "max_running_tasks": 3,
+    "configured_max_running_tasks": 3,
+    "running_tasks": 0,
+    "queued_tasks": 0
+}
+```
 
 ## web_console 架构
 

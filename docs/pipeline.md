@@ -6,19 +6,21 @@ StoryForge 使用 LangGraph 构建 Pipeline，以 `NovelState` 为共享状态�
 
 ```mermaid
 graph TD
-    START([开始]) --> OR{是否细化大纲}
-    OR -->|是| outline_refiner[outline_refiner<br/>章级细纲生成]
-    OR -->|否| writer
-    outline_refiner --> writer[writer<br/>写作]
+    START([开始]) --> OR{是否启用规划}
+    OR -->|是| volume_planner[volume_planner<br/>卷级规划]
+    OR -->|否| chapter_planner
+    volume_planner --> chapter_planner[chapter_planner<br/>章节规划]
+    chapter_planner --> writer[writer<br/>写作]
     writer --> reviewer[reviewer<br/>结构化审稿<br/>+AI味评估]
     reviewer -->|条件路由| RR{评审路由}
     RR -->|verdict=pass<br/>或max_retries| proofreader[proofreader<br/>结构化校对+终审]
     RR -->|verdict=revise| reviser[reviser<br/>根据意见修改]
-    RR -->|verdict=rewrite<br/>或AI味=high| writer
+    RR -->|verdict=rewrite| chapter_planner
     reviser --> reviewer
     proofreader -->|条件路由| PR{校对路由}
-    PR -->|verdict=可发布/可交付<br/>或超轮次| knowledge_extractor[knowledge_extractor<br/>知识萃取]
+    PR -->|passed=true<br/>或超轮次| feedback_synthesizer[feedback_synthesizer<br/>回写brief/生成提案]
     PR -->|verdict=需返修| reviser
+    feedback_synthesizer --> knowledge_extractor[knowledge_extractor<br/>知识萃取]
     knowledge_extractor --> ip_designer[ip_designer<br/>IP生成]
     ip_designer --> END([结束])
 ```
@@ -34,6 +36,9 @@ pipeline = NovelPipeline(
     use_outline_refinement=True,         # 是否启用大纲细化
     use_extraction=True,                 # 是否启用知识萃取
     use_ip_generation=True,              # 是否启用IP生成
+    use_video_generation=False,          # 是否启用视频链路
+    use_message_bus=True,                # 是否启用消息总线
+    use_agent_routing=False,             # 是否记录/尝试使用路由建议
     checkpoint_dir=".checkpoints",       # 断点续跑目录
     ip_output_dir="./ip_assets"          # IP资产输出目录
 )
@@ -43,11 +48,13 @@ pipeline = NovelPipeline(
 
 | 节点 | 模块 | 职责 | 输出到 state |
 |------|------|------|--------------|
-| `outline_refiner` | `stages/outline/OutlineGenerator` | 从卷纲生成章级细纲 | `creation.chapter_outlines` |
+| `volume_planner` | `stages/outline/ProgressivePlanner` | 生成/更新卷级 brief | `volume_briefs`, `volume_outline` |
+| `chapter_planner` | `stages/outline/ProgressivePlanner` | 生成当前章节 brief | `chapter_briefs` |
 | `writer` | `agents/creation_agents.WriterAgent` | 基于细纲创作章节 | `chapters[current_chapter]`, `chapter_status` |
 | `reviewer` | `agents/creation_agents.ReviewerAgent` | 结构化审稿 + AI味评估 | `structured_reviews`, `reviews`, `review_round` |
 | `reviser` | `agents/creation_agents.ReviserAgent` | 根据审稿意见修改 | `chapters[current_chapter]`, `chapter_status` |
 | `proofreader` | `agents/creation_agents.ProofreaderAgent` | 结构化校对 + 终审判定 | `proofread_results`, `proofread_records` |
+| `feedback_synthesizer` | `pipeline/novel_pipeline.py` | 汇总审稿/校对反馈并回写 brief | `chapter_briefs`, `proposals` |
 | `knowledge_extractor` | `stages/extraction/KnowledgeExtractor` | 从章节提取知识 | `chapter_analyses`, `current_stage=extraction` |
 | `ip_designer` | `stages/ip_generation/IPGenerator` | 生成 IP 资产 | `story_bible`, `character_ips`, `current_stage=ip_generation` |
 
@@ -60,8 +67,8 @@ pipeline = NovelPipeline(
 | `video_script` | `stages/video_script/VideoScriptGenerator` | 从章节生成镜头级剧本（ShotSpec 列表） | `creation.video_script_id` |
 | `visual_bible` | `stages/video_bible/VisualBibleBuilder` | 构建人物视觉圣经与场景参考 | `creation.visual_bible_id` |
 | `video_assets` | `stages/video_assets/VideoAssetGenerator` | 为角色/场景生成参考图与镜头参考资产 | `creation.video_manifest_id` |
-| `video_consistency` | `core.video.consistency.VideoConsistencyService` | 对镜头、角色视觉与文本做量化一致性检查并记录回退原因 | `creation.video_consistency_report_id`, `video_fallback_reasons` |
-| `video_generate` | `stages/video_generation/VideoGenerator` | 调用 VideoProvider 生成镜头片段并汇总为渲染计划与输出 | `creation.video_output_id`, `video_render_plan_id` |
+| `video_consistency` | `core.video.consistency.VideoConsistencyService` | 对镜头、角色视觉与文本做量化一致性检查并记录回退原因 | `video_fallback_reasons`, `error_message` |
+| `video_generate` | `stages/video_generation/VideoGenerator` | 调用 VideoProvider 生成镜头片段并汇总为渲染计划与输出 | `video_output_id`, `video_render_plan_id` |
 
 路由逻辑：`video_consistency` 节点可触发自动回退（例如重新生成资产或降低阈值），并将回退原因写入 `NovelState.video_fallback_reasons`。
 
@@ -73,42 +80,35 @@ pipeline = NovelPipeline(
 # 优先级：
 # 1. 错误状态 → max_retries
 # 2. 超轮次 → max_retries
-# 3. AI味=high → rewrite
-# 4. verdict=pass → approve
-# 5. verdict=rewrite → rewrite
-# 6. verdict=revise → revise
-# 7. 回退：分数判断 (≥85/60-84/<60)
+# 3. verdict=pass → approve
+# 4. verdict=rewrite → rewrite
+# 5. verdict=revise → revise
+# 6. 回退：分数判断 (≥85 / 其他)
 ```
 
 | 条件 | 路由 | 说明 |
 |------|------|------|
 | `state.error_message` 存在 | `max_retries` → proofreader | 错误状态强制放行 |
 | `review_round >= max_review_rounds` | `max_retries` → proofreader | 超轮次强制放行，避免死循环 |
-| `ai_flavor_level == "high"` | `rewrite` → writer | AI味过重，要求重写 |
 | `verdict == "pass"` | `approve` → proofreader | 高分通过 |
 | `verdict == "revise"` | `revise` → reviser | 需修改 |
-| `verdict == "rewrite"` | `rewrite` → writer | 要求重写 |
+| `verdict == "rewrite"` | `rewrite` → chapter_planner | 重新规划后重写 |
 | `score >= 85` | `approve` → proofreader | （回退）高分通过 |
-| `60 <= score < 85` | `revise` → reviser | （回退）需修改 |
-| `score < 60` | `rewrite` → writer | （回退）要求重写 |
+| 其他 | `revise` → reviser | （回退）默认进入修改 |
 
 ### 校对路由（`_proofread_router`）
 
 ```python
 # 优先级：
-# 1. verdict="可发布"/"可交付" → pass
-# 2. verdict="需返修" → fail
-# 3. status=APPROVED → pass
-# 4. 超轮次 → pass
-# 5. 其他 → fail
+# 1. latest.passed=True → pass
+# 2. 超轮次 → pass
+# 3. 其他 → fail
 ```
 
 | 条件 | 路由 | 说明 |
 |------|------|------|
-| `verdict in ("可发布", "可交付")` | `pass` → knowledge_extractor | 终审通过 |
-| `verdict == "需返修"` | `fail` → reviser | 返回修改 |
-| `status == APPROVED` | `pass` → knowledge_extractor | （回退）状态为通过 |
-| `review_round >= max_review_rounds + 2` | `pass` → knowledge_extractor | 校对也超次，强制放行 |
+| `latest.passed is True` | `pass` → feedback_synthesizer | 校对通过 |
+| `review_round >= max_review_rounds + 2` | `pass` → feedback_synthesizer | 校对超次，强制放行 |
 | 其他 | `fail` → reviser | 返回修改 |
 
 ## 循环控制
@@ -131,23 +131,22 @@ Pipeline 在每个节点执行后自动保存检查点：
 
 ```python
 # 检查点位置：
-{checkpoint_dir}/checkpoint_{novel_id}_ch{chapter}.json
+{checkpoint_dir}/pipeline_{novel_id}_ch{chapter}.json
 
 # 内容：
 {
     "novel_id": "...",
     "current_chapter": 1,
-    "current_stage": "creation",
     "last_node": "writer",  # 上一个完成的节点
-    "chapter_status": {...},
     "review_round": 1,
-    "chapters": {...},
-    "creation": {...},
-    "reviews": {...},
-    "structured_reviews": {...},
-    "proofread_results": {...},
+    "max_review_rounds": 3,
     "error_message": "",
-    "timestamp": "..."
+    "should_pause": false,
+    "chapter_briefs": {...},
+    "volume_briefs": {...},
+    "context_decisions": [...],
+    "proposals": [...],
+    "canonical_versions": {...}
 }
 ```
 
@@ -233,8 +232,8 @@ results = pipeline.run_batch(state, chapters=[1, 2, 3])
 # results[2] → 第2章的 NovelState
 ```
 
-- 当前实现会复用同一个 `state` 对象并逐章修改 `current_chapter`
-- 当前实现不是并行执行，且不保证章节间状态完全隔离
+- 当前实现会先对传入 `state` 做深拷贝，再逐章设置 `current_chapter`
+- 当前实现不是并行执行
 
 ### `NovelPipeline.resume(novel_id, chapter, from_node)` — 断点续跑
 

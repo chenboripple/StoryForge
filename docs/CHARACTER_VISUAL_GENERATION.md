@@ -134,31 +134,23 @@ Content-Type: application/json
 ```
 
 ### 响应结果
+
+当前 API 端点会先返回排队中的视觉任务；实际图片生成由后台 worker 完成。
+
 ```json
 {
+  "task_id": "7a8c...",
+  "status": "queued",
+  "task_kind": "character_visual",
   "novel_id": "...",
-  "character_id": "...",
-  "generated": {
-    "id": "img_xxxxx",
-    "type": "main|gallery|video",
-    "url": "https://...",
-    "local_path": "/Users/ripple/novels/.../image.png",
-    "prompt": "完整提示词（包含特征提取结果）",
-    "style": "风格",
-    "size": "1440x1080",
-    "aspect_ratio": "16:9",
-    "image_preset": "720p",
-    "generated_at": "2026-05-16T...",
-    "agent": "镜相",
-    "provider": "qwen-image"
-  },
-  "profile": {
-    "main_image": {...},
-    "gallery_images": [...],
-    "video_images": [...]
-  }
+  "character_id": "..."
 }
 ```
+
+生成完成后：
+
+- 使用 `GET /api/v1/tasks/{task_id}` 查看任务状态与错误信息
+- 使用 `GET /api/v1/novels/{novel_id}/characters/{character_id}/visuals` 读取最终 `generated/profile` 数据
 
 ## 当前实现方案
 
