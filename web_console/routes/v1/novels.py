@@ -8,6 +8,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from core.models import Character, CharacterGraph, NovelMeta, Outline, PipelineStage, WorldSetting
@@ -18,11 +19,32 @@ from web_console.runtime.models import QueueTask, TaskRuntime
 from web_console.runtime.registry import TaskRegistry
 from web_console.services import character_visuals as character_visual_service
 from web_console.services import novel_cover as novel_cover_service
+from web_console.services import visual_prompting as visual_prompting_service
 from web_console.services import visual_tasks as visual_task_service
 from web_console.services.novels import _discover_novels
 from web_console.utils import _now, _resolve_project_dir
 
 router = APIRouter(tags=["novels"])
+
+
+@router.get("/media/generated/{filename}")
+async def get_generated_image(
+    filename: str,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> FileResponse:
+    safe_name = os.path.basename((filename or "").strip())
+    if not safe_name or safe_name != filename or ".." in safe_name:
+        raise HTTPException(status_code=400, detail="非法文件名")
+
+    generated_dir = os.path.abspath(os.path.join(sm.config.data_dir, "generated_images"))
+    file_path = os.path.abspath(os.path.join(generated_dir, safe_name))
+
+    if os.path.commonpath([generated_dir, file_path]) != generated_dir:
+        raise HTTPException(status_code=400, detail="非法路径")
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="图片不存在")
+
+    return FileResponse(file_path)
 
 
 class CreateNovelRequest(BaseModel):
@@ -69,6 +91,11 @@ class NovelCoverGenerateRequest(BaseModel):
     style: str = ""
     image_preset: str = "720p"
     aspect_ratio: str = "16:9"
+
+
+class PromptDraftRequest(BaseModel):
+    prompt: str = ""
+    style: str = ""
 
 
 def _enqueue_pipeline_command(
@@ -207,7 +234,24 @@ async def get_novel(
     if meta is None:
         raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
 
-    result = meta.to_index_entry()
+    current_stage = meta.current_stage.value if hasattr(meta.current_stage, "value") else str(meta.current_stage)
+    result = {
+        "novel_id": meta.novel_id,
+        "novel_path": f"novels/{meta.novel_id}",
+        "novel_title": meta.novel_title,
+        "genre": meta.genre,
+        "concept": meta.concept,
+        "target_word_count": meta.target_word_count,
+        "current_stage": current_stage,
+        "current_chapter": meta.current_chapter,
+        "total_chapters": meta.total_chapters,
+        "approved_chapters": meta.approved_chapters,
+        "draft_chapters": meta.draft_chapters,
+        "review_chapters": meta.review_chapters,
+        "rejected_chapters": meta.rejected_chapters,
+        "created_at": meta.created_at,
+        "updated_at": meta.updated_at,
+    }
     characters_list: List[Dict[str, Any]] = []
     try:
         char_graph = sm.load_characters(novel_id)
@@ -248,10 +292,92 @@ async def get_novel_context(
 
     outline = sm.load_outline(novel_id)
     world = sm.load_world(novel_id)
+    story_bible = sm.load_story_bible(novel_id)
+
+    volume_items: List[Dict[str, Any]] = []
+    if outline and getattr(outline, "volume_outlines", None):
+        for vol_num, vol in sorted(outline.volume_outlines.items(), key=lambda x: int(x[0])):
+            chapter_outlines = list((vol.chapter_outlines or {}).values())
+            volume_items.append(
+                {
+                    "volume_num": int(vol_num),
+                    "title": getattr(vol, "title", "") or f"第{vol_num}卷",
+                    "theme": getattr(vol, "theme", ""),
+                    "chapter_range": getattr(vol, "chapter_range", ""),
+                    "summary": getattr(vol, "summary", ""),
+                    "key_events": list(getattr(vol, "key_events", []) or []),
+                    "chapter_count": len(chapter_outlines),
+                    "chapters": [
+                        {
+                            "chapter_num": getattr(ch, "chapter_num", 0),
+                            "title": getattr(ch, "title", ""),
+                            "theme": getattr(ch, "theme", ""),
+                            "plot": getattr(ch, "plot", ""),
+                            "hooks": list(getattr(ch, "hooks", []) or []),
+                            "foreshadowings": list(getattr(ch, "foreshadowings", []) or []),
+                            "words_target": getattr(ch, "words_target", 0),
+                        }
+                        for ch in sorted(chapter_outlines, key=lambda item: int(getattr(item, "chapter_num", 0)))
+                    ],
+                }
+            )
+
+    chapter_foreshadowings: Dict[str, Dict[str, Any]] = {}
+    if outline and getattr(outline, "chapter_outlines", None):
+        for ch_num, ch_outline in (outline.chapter_outlines or {}).items():
+            for text in list(getattr(ch_outline, "foreshadowings", []) or []):
+                key = str(text or "").strip()
+                if not key:
+                    continue
+                item = chapter_foreshadowings.setdefault(
+                    key,
+                    {
+                        "foreshadowing_id": f"fs_{len(chapter_foreshadowings) + 1}",
+                        "content": key,
+                        "set_in_chapters": [],
+                        "resolved_in_chapters": [],
+                    },
+                )
+                item["set_in_chapters"].append(int(ch_num))
 
     timeline: List[Dict[str, Any]] = []
+    foreshadowing_from_timeline: Dict[str, Dict[str, Any]] = {}
     if world and getattr(world, "timeline", None):
         for evt in world.timeline:
+            chapter_num = int(getattr(evt, "chapter", 0) or 0)
+
+            for text in list(getattr(evt, "foreshadowing_set", []) or []):
+                key = str(text or "").strip()
+                if not key:
+                    continue
+                item = foreshadowing_from_timeline.setdefault(
+                    key,
+                    {
+                        "foreshadowing_id": f"fs_t_{len(foreshadowing_from_timeline) + 1}",
+                        "content": key,
+                        "set_in_chapters": [],
+                        "resolved_in_chapters": [],
+                    },
+                )
+                if chapter_num > 0:
+                    item["set_in_chapters"].append(chapter_num)
+
+            for text in list(getattr(evt, "foreshadowing_paid", []) or []):
+                key = str(text or "").strip()
+                if not key:
+                    continue
+                item = foreshadowing_from_timeline.setdefault(
+                    key,
+                    {
+                        "foreshadowing_id": f"fs_t_{len(foreshadowing_from_timeline) + 1}",
+                        "content": key,
+                        "set_in_chapters": [],
+                        "resolved_in_chapters": [],
+                    },
+                )
+                if chapter_num > 0:
+                    item["resolved_in_chapters"].append(chapter_num)
+
             try:
                 timeline.append(evt.to_dict())
             except Exception:
@@ -259,17 +385,97 @@ async def get_novel_context(
                     "chapter": getattr(evt, "chapter", 0),
                     "timestamp": getattr(evt, "timestamp", ""),
                     "description": getattr(evt, "description", ""),
+                    "foreshadowing_set": list(getattr(evt, "foreshadowing_set", []) or []),
+                    "foreshadowing_paid": list(getattr(evt, "foreshadowing_paid", []) or []),
                 })
+
+    merged_foreshadowings: Dict[str, Dict[str, Any]] = {}
+    for source in (chapter_foreshadowings, foreshadowing_from_timeline):
+        for content, payload in source.items():
+            existing = merged_foreshadowings.get(content)
+            if not existing:
+                merged_foreshadowings[content] = {
+                    "foreshadowing_id": payload.get("foreshadowing_id"),
+                    "content": content,
+                    "set_in_chapters": sorted(set(payload.get("set_in_chapters", []))),
+                    "resolved_in_chapters": sorted(set(payload.get("resolved_in_chapters", []))),
+                }
+                continue
+            existing["set_in_chapters"] = sorted(
+                set(existing.get("set_in_chapters", [])) | set(payload.get("set_in_chapters", []))
+            )
+            existing["resolved_in_chapters"] = sorted(
+                set(existing.get("resolved_in_chapters", [])) | set(payload.get("resolved_in_chapters", []))
+            )
+
+    foreshadowing_items: List[Dict[str, Any]] = []
+    for idx, (content, payload) in enumerate(sorted(merged_foreshadowings.items(), key=lambda x: x[0]), start=1):
+        resolved = len(payload.get("resolved_in_chapters", [])) > 0
+        foreshadowing_items.append(
+            {
+                "foreshadowing_id": payload.get("foreshadowing_id") or f"fs_{idx}",
+                "content": content,
+                "set_in_chapters": payload.get("set_in_chapters", []),
+                "resolved_in_chapters": payload.get("resolved_in_chapters", []),
+                "status": "resolved" if resolved else "open",
+            }
+        )
     timeline.sort(key=lambda x: int(x.get("chapter") or 0))
+
+    logline = ""
+    if outline and getattr(outline, "logline", None):
+        logline = outline.logline
+    elif story_bible and getattr(story_bible, "logline", None):
+        logline = story_bible.logline
+
+    themes = list(getattr(outline, "themes", []) or [])
+    if not themes and story_bible:
+        themes = list(getattr(story_bible, "themes", []) or [])
+
+    tone = ""
+    if outline and getattr(outline, "tone", None):
+        tone = outline.tone
+    elif story_bible and getattr(story_bible, "tone", None):
+        tone = story_bible.tone
+
+    target_audience = ""
+    if outline and getattr(outline, "target_audience", None):
+        target_audience = outline.target_audience
+    elif story_bible and getattr(story_bible, "target_audience", None):
+        target_audience = story_bible.target_audience
+
+    current_stage = meta.current_stage.value if hasattr(meta.current_stage, "value") else str(meta.current_stage)
 
     return {
         "novel_id": novel_id,
         "concept": meta.concept,
+        "novel_doc": {
+            "file": "novel.json",
+            "novel_id": novel_id,
+            "novel_title": meta.novel_title,
+            "genre": meta.genre,
+            "concept": meta.concept,
+            "target_word_count": meta.target_word_count,
+            "current_stage": current_stage,
+            "current_chapter": meta.current_chapter,
+            "total_chapters": meta.total_chapters,
+            "approved_chapters": meta.approved_chapters,
+            "logline": logline,
+            "themes": themes,
+            "tone": tone,
+            "target_audience": target_audience,
+            "overall_outline": getattr(outline, "overall_outline", "") if outline else "",
+            "volume_count": len(volume_items),
+        },
         "outline": {
             "overall_outline": getattr(outline, "overall_outline", "") if outline else "",
             "core_concept": getattr(outline, "core_concept", "") if outline else "",
             "themes": getattr(outline, "themes", []) if outline else [],
             "world_overview": getattr(outline, "world_overview", "") if outline else "",
+        },
+        "volumes_doc": {
+            "file": "volX.json",
+            "volumes": volume_items,
         },
         "world": {
             "name": getattr(world, "name", "") if world else "",
@@ -278,6 +484,24 @@ async def get_novel_context(
             "rules": getattr(world, "rules", []) if world else [],
             "technology_level": getattr(world, "technology_level", "") if world else "",
             "magic_system": getattr(world, "magic_system", "") if world else "",
+        },
+        "world_doc": {
+            "file": "world.json",
+            "name": getattr(world, "name", "") if world else "",
+            "overview": getattr(world, "overview", "") if world else "",
+            "history": getattr(world, "history", "") if world else "",
+            "rules": getattr(world, "rules", []) if world else [],
+            "technology_level": getattr(world, "technology_level", "") if world else "",
+            "magic_system": getattr(world, "magic_system", "") if world else "",
+            "faction_count": len(getattr(world, "factions", {}) or {}) if world else 0,
+            "location_count": len(getattr(world, "locations", {}) or {}) if world else 0,
+        },
+        "foreshadowing_doc": {
+            "file": "foreshadowing.json",
+            "total": len(foreshadowing_items),
+            "resolved": sum(1 for item in foreshadowing_items if item.get("status") == "resolved"),
+            "open": sum(1 for item in foreshadowing_items if item.get("status") == "open"),
+            "items": foreshadowing_items,
         },
         "timeline": timeline,
     }
@@ -427,6 +651,34 @@ async def generate_novel_cover(
         raise HTTPException(status_code=500, detail=f"提交小说封面任务失败: {exc}") from exc
 
 
+@router.post("/novels/{novel_id}/cover/prompt-draft")
+async def suggest_novel_cover_prompt(
+    novel_id: str,
+    req: PromptDraftRequest,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    meta = sm.load_novel_meta(novel_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
+
+    try:
+        from web_console.services.novel_cover import _build_prompt_optimizer_client
+
+        draft = visual_prompting_service.generate_cover_prompt_draft(
+            sm=sm,
+            novel_id=novel_id,
+            user_prompt=req.prompt,
+            style=req.style,
+            llm_client=_build_prompt_optimizer_client(),
+        )
+        return {
+            "novel_id": novel_id,
+            **draft,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"生成封面提示词草稿失败: {exc}") from exc
+
+
 @router.post("/novels/{novel_id}/characters/{character_id}/visuals/generate")
 async def generate_character_visuals(
     novel_id: str,
@@ -456,6 +708,37 @@ async def generate_character_visuals(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"提交角色形象任务失败: {exc}") from exc
+
+
+@router.post("/novels/{novel_id}/characters/{character_id}/visuals/main/prompt-draft")
+async def suggest_character_main_prompt(
+    novel_id: str,
+    character_id: str,
+    req: PromptDraftRequest,
+    sm: StorageManager = Depends(get_storage_manager_dep),
+) -> dict:
+    meta = sm.load_novel_meta(novel_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"novel not found: {novel_id}")
+
+    try:
+        from web_console.services.character_visuals import _build_prompt_optimizer_client
+
+        draft = visual_prompting_service.generate_character_main_prompt_draft(
+            sm=sm,
+            novel_id=novel_id,
+            character_id=character_id,
+            user_prompt=req.prompt,
+            style=req.style,
+            llm_client=_build_prompt_optimizer_client(),
+        )
+        return {
+            "novel_id": novel_id,
+            "character_id": character_id,
+            **draft,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"生成角色主图提示词草稿失败: {exc}") from exc
 
 
 @router.post("/novels/{novel_id}/characters/{character_id}/visuals/finalize")

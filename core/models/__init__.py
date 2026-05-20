@@ -11,8 +11,6 @@ StoryForge 模型层（Models Layer）
 - agent/ - Agent 通信相关
 - video/ - 视频生成相关
 
-向后兼容：
-旧的导入路径（如 from .novel_meta import NovelMeta）继续有效
 """
 # 基础模块
 from .base import BaseModel, TimestampMixin, JSONSerializable
@@ -45,43 +43,6 @@ from .agent import (
     AgentMessage, RoutingSuggestion,
 )
 from .video import (
-    ShotSpec,
-    VideoScript,
-    CharacterVisualProfile,
-    SceneCanonicalProfile,
-    VisualBible,
-    VideoAsset,
-    AssetManifest,
-    VideoRenderPlan,
-    ConsistencyIssue,
-    ConsistencyMetrics,
-    ConsistencyThresholds,
-    ConsistencyReport,
-    VideoOutput,
-    VideoState,
-)
-
-# 向后兼容：旧的单文件导入路径仍然有效
-# 这些别名确保现有代码不会中断
-from .content.novel_meta import NovelMeta, PipelineStage
-from .content.outline import Outline, ChapterOutline, VolumeOutline
-from .content.chapter import Chapter, ChapterStatus
-from .content.review import Review, ReviewRecord, DimensionScore, ReviewVerdict, ReviewIssue
-from .content.proofread import Proofread, ProofreadRecord, ProofreadIssue, ProofreadIssueType
-from .world.characters import Character, Relationship, RelationshipType, CharacterGraph
-from .world.world_setting import WorldSetting, TimelineEvent, Location, LocationType, Faction, FactionType
-from .extraction.extraction import (
-    ChapterAnalysis,
-    ExtractedEntity,
-    ExtractedCharacter,
-    ExtractedLocation,
-    ExtractedForeshadowing,
-    CharacterUpdate,
-    WorldUpdate,
-)
-from .ip.ip_assets import CharacterIP, RelationshipEdge, SceneSetting, DerivedSetting, StoryBible
-from .agent.agent_comm import AgentMessage, RoutingSuggestion
-from .video.video_assets import (
     ShotSpec,
     VideoScript,
     CharacterVisualProfile,

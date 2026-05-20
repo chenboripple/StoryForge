@@ -9,6 +9,7 @@ import math
 import subprocess
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
+import uuid
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -217,7 +218,7 @@ def _generate_openai_compatible_image(
 def download_image(url: str, output_dir: Optional[str] = None) -> Tuple[Optional[str], str]:
     target_dir = os.path.abspath(output_dir or os.getcwd())
     os.makedirs(target_dir, exist_ok=True)
-    filename = f"generated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    filename = f"generated_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:8]}.png"
     file_path = os.path.join(target_dir, filename)
 
     if url.startswith("data:image/"):

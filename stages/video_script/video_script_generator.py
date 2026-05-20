@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from typing import Dict
 
-from core.models.video_assets import ShotSpec, VideoScript
-from core.models.chapter import Chapter
+from core.models.video import ShotSpec, VideoScript
+from core.models.content import Chapter
 
 
 class VideoScriptGenerator:

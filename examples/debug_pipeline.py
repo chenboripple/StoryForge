@@ -384,7 +384,7 @@ def main():
         if 1 in result.reviews:
             print(f"\n审稿记录：")
             for r in result.reviews[1]:
-                print(f"  第{r.round}轮 - {r.reviewer}: {r.score}分 {'✅' if r.passed else '❌'}")
+                print(f"  第{r.round}轮 - {r.reviewer}: {r.total_score}分 {'✅' if r.passed else '❌'}")
         
         print(f"\n所有调试文件已保存到：{os.path.abspath(DEBUG_DIR)}")
         print()

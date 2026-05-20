@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import math
 from typing import List
 
-from core.models.video_assets import (
+from core.models.video import (
     AssetManifest,
     ConsistencyIssue,
     ConsistencyMetrics,

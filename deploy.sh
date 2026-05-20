@@ -7,9 +7,12 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_ROOT/.venv"
 DEPLOY_DIR="$PROJECT_ROOT/.deploy"
-LOG_DIR="$PROJECT_ROOT/logs"
 PID_FILE="$DEPLOY_DIR/server.pid"
 USER_CONFIG_DIR="$HOME/.storyforge"
+LOG_DIR="$USER_CONFIG_DIR/logs"
+LOG_RETENTION_DAYS=15
+MAX_WORKERS=10
+GUNICORN_LOG_CONFIG="$DEPLOY_DIR/gunicorn_logging.conf"
 CONFIG_FILE="$USER_CONFIG_DIR/storyforge.yaml"
 CONFIG_EXAMPLE_MD="$PROJECT_ROOT/docs/config-example.md"
 LAUNCHD_LABEL="com.storyforge.webconsole"
@@ -100,6 +103,27 @@ PYEOF
     fi
 }
 
+resolve_worker_args() {
+    local workers=$(read_config workers "")
+
+    # 允许不配置 workers，交给 gunicorn 使用默认值；配置了则不做上限限制。
+    if [ -z "$workers" ] || [ "$workers" = "None" ]; then
+        echo ""
+        return
+    fi
+
+    if [[ "$workers" =~ ^[1-9][0-9]*$ ]]; then
+        if [ "$workers" -gt "$MAX_WORKERS" ]; then
+            log_warn "server.workers=$workers 超过上限 $MAX_WORKERS，已自动调整为 $MAX_WORKERS"
+            workers=$MAX_WORKERS
+        fi
+        echo "-w $workers"
+    else
+        log_warn "server.workers 配置无效: $workers，已回退为 gunicorn 默认 worker 数"
+        echo ""
+    fi
+}
+
 # 检查是否有正在运行的进程
 is_running() {
     if [ ! -f "$PID_FILE" ]; then
@@ -122,6 +146,68 @@ mkdirs() {
     mkdir -p "$DEPLOY_DIR"
     mkdir -p "$LOG_DIR"
     mkdir -p "$USER_CONFIG_DIR"
+    cleanup_old_logs
+}
+
+cleanup_old_logs() {
+    # 仅清理日志目录中超过保留天数的日志文件，避免误删其他文件
+    if [ ! -d "$LOG_DIR" ]; then
+        return
+    fi
+
+    find "$LOG_DIR" -type f \
+        \( -name "*.log" -o -name "*.log.*" \) \
+        -mtime +$LOG_RETENTION_DAYS \
+        -delete 2>/dev/null || true
+}
+
+generate_gunicorn_log_config() {
+    cat > "$GUNICORN_LOG_CONFIG" <<EOF
+[loggers]
+keys=root,gunicorn.error,gunicorn.access
+
+[handlers]
+keys=error_file,access_file
+
+[formatters]
+keys=generic,access
+
+[logger_root]
+level=INFO
+handlers=error_file
+
+[logger_gunicorn.error]
+level=INFO
+handlers=error_file
+propagate=0
+qualname=gunicorn.error
+
+[logger_gunicorn.access]
+level=INFO
+handlers=access_file
+propagate=0
+qualname=gunicorn.access
+
+[handler_error_file]
+class=logging.handlers.TimedRotatingFileHandler
+level=INFO
+formatter=generic
+args=('${LOG_DIR}/error.log', 'midnight', 1, ${LOG_RETENTION_DAYS}, 'utf-8', False, False)
+
+[handler_access_file]
+class=logging.handlers.TimedRotatingFileHandler
+level=INFO
+formatter=access
+args=('${LOG_DIR}/access.log', 'midnight', 1, ${LOG_RETENTION_DAYS}, 'utf-8', False, False)
+
+[formatter_generic]
+format=%(asctime)s [%(process)d] [%(levelname)s] %(message)s
+datefmt=%Y-%m-%d %H:%M:%S
+
+[formatter_access]
+format=%(asctime)s %(message)s
+datefmt=%Y-%m-%d %H:%M:%S
+EOF
 }
 
 # 确保配置文件存在；不存在则从 docs/config-example.md 复制
@@ -181,21 +267,28 @@ start_server() {
 
     mkdirs
     ensure_config
+    generate_gunicorn_log_config
 
     source "$VENV_DIR/bin/activate"
 
     local host=$(read_config host "$DEFAULT_HOST")
     local port=$(read_config port "$DEFAULT_PORT")
+    local worker_args=$(resolve_worker_args)
 
     log_info "启动服务器 (host: $host, port: $port)..."
     log_info "配置文件: $CONFIG_FILE"
+    if [ -n "$worker_args" ]; then
+        log_info "Gunicorn workers: ${worker_args#-w }"
+    else
+        log_info "Gunicorn workers: 使用默认值"
+    fi
 
     cd "$PROJECT_ROOT"
-    gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b "$host:$port" web_console.app:app \
+    gunicorn -k uvicorn.workers.UvicornWorker ${worker_args} -b "$host:$port" web_console.app:app \
         --pid "$PID_FILE" \
         --daemon \
-        --access-logfile "$LOG_DIR/access.log" \
-        --error-logfile "$LOG_DIR/error.log"
+        --log-config "$GUNICORN_LOG_CONFIG" \
+        --access-logfile -
 
     sleep 2
 
@@ -287,6 +380,19 @@ generate_launchd_plist() {
 
     local host=$(read_config host "$DEFAULT_HOST")
     local port=$(read_config port "$DEFAULT_PORT")
+    local workers=$(read_config workers "")
+    local launchd_workers=""
+    generate_gunicorn_log_config
+
+    if [[ "$workers" =~ ^[1-9][0-9]*$ ]]; then
+        if [ "$workers" -gt "$MAX_WORKERS" ]; then
+            log_warn "server.workers=$workers 超过上限 $MAX_WORKERS，launchd 已自动调整为 $MAX_WORKERS"
+            workers=$MAX_WORKERS
+        fi
+        launchd_workers="$workers"
+    elif [ -n "$workers" ] && [ "$workers" != "None" ]; then
+        log_warn "server.workers 配置无效: $workers，launchd 将使用 gunicorn 默认 worker 数"
+    fi
 
     cat > "$LAUNCHD_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -301,17 +407,21 @@ generate_launchd_plist() {
     <string>$VENV_DIR/bin/gunicorn</string>
     <string>-k</string>
     <string>uvicorn.workers.UvicornWorker</string>
+$(if [ -n "$launchd_workers" ]; then
+    cat <<INNER
     <string>-w</string>
-    <string>2</string>
+    <string>$launchd_workers</string>
+INNER
+fi)
     <string>-b</string>
     <string>$host:$port</string>
     <string>web_console.app:app</string>
     <string>--pid</string>
     <string>$PID_FILE</string>
-    <string>--access-logfile</string>
-    <string>$LOG_DIR/access.log</string>
-    <string>--error-logfile</string>
-    <string>$LOG_DIR/error.log</string>
+        <string>--log-config</string>
+        <string>$GUNICORN_LOG_CONFIG</string>
+        <string>--access-logfile</string>
+        <string>-</string>
   </array>
 
   <key>WorkingDirectory</key>

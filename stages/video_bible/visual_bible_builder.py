@@ -5,13 +5,13 @@ from __future__ import annotations
 
 from typing import Dict
 
-from core.models.video_assets import (
+from core.models.video import (
     CharacterVisualProfile,
     SceneCanonicalProfile,
     VideoScript,
     VisualBible,
 )
-from core.models.characters import CharacterGraph
+from core.models.world import CharacterGraph
 
 
 class VisualBibleBuilder:

@@ -152,20 +152,70 @@ class StorageManager:
         """检查小说是否存在"""
         return self._novel_meta_store.exists(novel_id)
 
-    def list_novels(self) -> List[Dict[str, Any]]:
-        """获取小说列表（从 index.json）"""
+    def _build_index_entry(self, novel_id: str) -> Dict[str, Any]:
+        """构建最小索引条目：仅维护小说清单和路径。"""
+        return {
+            "novel_id": novel_id,
+            "novel_path": f"novels/{novel_id}",
+        }
+
+    def _list_index_entries(self) -> List[Dict[str, Any]]:
+        """读取 index.json 原始条目。"""
         if not os.path.exists(self.config.index_file):
             return []
         with open(self.config.index_file, "r", encoding=self.config.encoding) as f:
             try:
-                return json.load(f)
+                raw = json.load(f)
             except json.JSONDecodeError:
                 return []
 
+        if not isinstance(raw, list):
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            novel_id = str(item.get("novel_id") or "").strip()
+            if not novel_id:
+                continue
+            novel_path = str(item.get("novel_path") or f"novels/{novel_id}").strip()
+            entries.append({"novel_id": novel_id, "novel_path": novel_path})
+        return entries
+
+    def list_novels(self) -> List[Dict[str, Any]]:
+        """获取小说列表。索引只存清单与路径，进展信息从 novel_meta.json 补全。"""
+        entries = self._list_index_entries()
+        novels: List[Dict[str, Any]] = []
+
+        for item in entries:
+            novel_id = item["novel_id"]
+            meta = self.load_novel_meta(novel_id)
+            if meta:
+                stage_value = meta.current_stage.value if hasattr(meta.current_stage, "value") else str(meta.current_stage)
+                novels.append(
+                    {
+                        "novel_id": novel_id,
+                        "novel_path": item["novel_path"],
+                        "novel_title": meta.novel_title or novel_id,
+                        "genre": meta.genre,
+                        "concept": meta.concept[:120] if meta.concept else "",
+                        "current_stage": stage_value,
+                        "current_chapter": meta.current_chapter,
+                        "total_chapters": meta.total_chapters,
+                        "approved_chapters": meta.approved_chapters,
+                        "progress_percent": round(meta.approved_chapters / max(meta.total_chapters, 1) * 100, 1),
+                        "updated_at": meta.updated_at,
+                    }
+                )
+            else:
+                novels.append(item)
+        return novels
+
     def update_index(self, meta: NovelMeta):
-        """更新索引文件"""
-        entries = self.list_novels()
-        entry = meta.to_index_entry()
+        """更新索引文件（仅维护小说清单和路径）。"""
+        entries = self._list_index_entries()
+        entry = self._build_index_entry(meta.novel_id)
         found = False
         for i, e in enumerate(entries):
             if e.get('novel_id') == meta.novel_id:
@@ -179,7 +229,7 @@ class StorageManager:
 
     def reorder_novels(self, novel_ids: List[str]) -> int:
         """按给定 novel_id 顺序重排索引并持久化，返回总条目数。"""
-        entries = self.list_novels()
+        entries = self._list_index_entries()
         if not entries:
             return 0
 
@@ -226,9 +276,7 @@ class StorageManager:
                 meta_file = os.path.join(novel_dir, self.FILENAMES['novel_meta'])
                 if os.path.exists(meta_file):
                     try:
-                        meta = self.load_novel_meta(dirname)
-                        if meta:
-                            entries.append(meta.to_index_entry())
+                        entries.append(self._build_index_entry(dirname))
                     except Exception:
                         continue
         with open(self.config.index_file, "w", encoding=self.config.encoding) as f:
@@ -247,7 +295,7 @@ class StorageManager:
         if novel_id in self._dirty:
             del self._dirty[novel_id]
         # 更新索引
-        entries = self.list_novels()
+        entries = self._list_index_entries()
         entries = [e for e in entries if e.get('novel_id') != novel_id]
         with open(self.config.index_file, "w", encoding=self.config.encoding) as f:
             json.dump(entries, f, ensure_ascii=self.config.ensure_ascii, indent=self.config.indent)

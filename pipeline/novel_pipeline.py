@@ -40,8 +40,15 @@ from core.video import (
     StubEmbeddingProvider,
     VideoConsistencyService,
 )
-from core.models.video_assets import VideoState
+from core.video.workflow import (
+    build_visual_bible_for_novel,
+    generate_video_assets_for_novel,
+    generate_video_script_for_novel,
+    validate_video_consistency_for_novel,
+)
+from core.models.video import VideoState
 from core.proposal_manager import ProposalManager
+from core.ip_workflow import generate_story_bible_for_novel
 
 # 使用单一状态模型，避免 PipelineState 与 NovelState 漂移。
 PipelineState = NovelState
@@ -494,13 +501,7 @@ class NovelPipeline:
         meta = sm.load_novel_meta(state.novel_id)
 
         try:
-            bible = self.ip_generator.generate(
-                title=meta.novel_title if meta else "未命名小说",
-                chapters=chapters,
-                chapter_analyses=analyses
-            )
-
-            sm.save_story_bible(state.novel_id, bible)
+            bible = generate_story_bible_for_novel(sm, state.novel_id, self.ip_generator)
 
             print(f"  ✅ IP 生成完成")
 
@@ -528,17 +529,7 @@ class NovelPipeline:
         chapters = sm.load_chapters(state.novel_id)
         meta = sm.load_novel_meta(state.novel_id)
 
-        script = self.video_script_generator.generate(
-            novel_id=state.novel_id,
-            title=meta.novel_title if meta else state.novel_id,
-            chapters=chapters,
-        )
-        sm.save_video_script(state.novel_id, script)
-
-        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
-        video_state.script = script
-        video_state.status = "scripted"
-        sm.save_video_state(state.novel_id, video_state)
+        script = generate_video_script_for_novel(sm, state.novel_id, self.video_script_generator)
 
         state.video_state_status = "scripted"
         state.video_script_id = f"{state.novel_id}:video_script"
@@ -558,13 +549,7 @@ class NovelPipeline:
             state.error_message = "缺少视频剧本，无法构建视觉圣经"
             return state
 
-        bible = self.visual_bible_builder.build(state.novel_id, script, chars)
-        sm.save_visual_bible(state.novel_id, bible)
-
-        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
-        video_state.visual_bible = bible
-        video_state.status = "bibled"
-        sm.save_video_state(state.novel_id, video_state)
+        bible = build_visual_bible_for_novel(sm, state.novel_id, self.visual_bible_builder)
 
         state.video_state_status = "bibled"
         state.visual_bible_id = f"{state.novel_id}:visual_bible"
@@ -584,15 +569,7 @@ class NovelPipeline:
             state.error_message = "缺少视频剧本或视觉圣经，无法生成资产"
             return state
 
-        manifest = self.video_asset_generator.generate(state.novel_id, script, bible)
-        sm.save_visual_bible(state.novel_id, bible)
-        sm.save_video_manifest(state.novel_id, manifest)
-
-        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
-        video_state.visual_bible = bible
-        video_state.manifest = manifest
-        video_state.status = "asseted"
-        sm.save_video_state(state.novel_id, video_state)
+        manifest = generate_video_assets_for_novel(sm, state.novel_id, self.video_asset_generator)
 
         state.video_state_status = "asseted"
         state.video_manifest_id = f"{state.novel_id}:video_manifest"
@@ -612,14 +589,7 @@ class NovelPipeline:
             state.error_message = "缺少视觉圣经或资产索引，无法做一致性校验"
             return state
 
-        report = self.video_consistency_service.validate(state.novel_id, bible, manifest)
-        sm.save_video_consistency_report(state.novel_id, report)
-
-        video_state = sm.load_video_state(state.novel_id) or VideoState(novel_id=state.novel_id)
-        video_state.consistency_report = report
-        video_state.error_message = "\n".join(report.fallback_reasons) if report.fallback_reasons else ""
-        video_state.status = "asseted" if report.passed else "failed"
-        sm.save_video_state(state.novel_id, video_state)
+        report = validate_video_consistency_for_novel(sm, state.novel_id, self.video_consistency_service)
 
         return state
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from core.models.video_assets import (
+from core.models.video import (
     AssetManifest,
     VideoOutput,
     VideoRenderPlan,

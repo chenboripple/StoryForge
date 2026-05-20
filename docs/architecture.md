@@ -12,6 +12,7 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  - routes/v1/ 仅保留 v1 APIRouter（/api/v1/）                       │
 │  - routes/__init__.py 路由聚合入口（v1-only）                        │
 │  - services/ 业务实现（novels / ip / video / progressive / visuals）│
+│    - visuals 共享 helper: web_console/services/visual_common.py     │
 │  - runtime/  TaskRegistry（任务队列、状态持久化）、模板白名单       │
 │  - middleware/ 统一错误处理、请求 ID、CORS                          │
 │  - security.py  上传安全、路径安全                                  │
@@ -46,14 +47,24 @@ StoryForge 是一个多 Agent 小说创作与 IP 衍生平台，基于 LangGraph
 │  core/models/ip/        CharacterIP, StoryBible                    │
 │  core/models/video/     VideoScript, VisualBible, ConsistencyReport│
 │  core/agent.py          BaseAgent, AgentPersona, MessageBus         │
+│  core/ip_workflow.py    StoryBible 生成与角色导出共享入口          │
+│  core/video/workflow.py 视频 script/bible/assets/consistency 共享入口│
 │  core/config.py         ~/.storyforge/storyforge.yaml  (全系统配置) │
 ├─────────────────────────────────────────────────────────────────────┤
 │                       stages/ 模块                                   │
 │  stages/outline/         OutlineGenerator / ProgressivePlanner      │
 │  stages/extraction/      KnowledgeExtractor (知识萃取)              │
 │  stages/ip_generation/   IPGenerator (IP 资产生成)                 │
+│                         由 core/ip_workflow.py 统一调度             │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+## 当前实现摘要
+
+- `AgentMessage` 统一以 `core/models/agent/agent_comm.py` 为模型定义，`core/agent.py` 仅承载 Agent 基类与消息总线。
+- 视觉服务共享逻辑集中在 `web_console/services/visual_common.py`。
+- Story Bible 入口统一在 `core/ip_workflow.py`。
+- 视频 script / visual bible / asset / consistency 的共享落盘逻辑统一在 `core/video/workflow.py`。
 
 ## 配置系统说明
 
@@ -183,7 +194,7 @@ debug:
 
 ## 阶段详解
 
-### 阶段一：创作 (Creation)
+### 创作阶段 (Creation)
 
 1. **卷规划** (volume_planner)：按章节所在卷生成/更新 volume brief
 2. **章规划** (chapter_planner)：基于卷规划生成当前章 brief
@@ -193,13 +204,13 @@ debug:
 6. **校对** (proofreader)：6层级检查 + 终审判定
 7. **反馈综合** (feedback_synthesizer)：回写 brief 并生成跨层 proposal
 
-### 阶段二：萃取 (Extraction)
+### 萃取阶段 (Extraction)
 
 - 从章节提取事件、人物、伏笔
 - 构建知识图谱
 - 更新 memory
 
-### 阶段三：IP 生成 (IP Generation)
+### IP 生成阶段 (IP Generation)
 
 - 生成 story bible
 - 人物 IP 资产（人设、台词、画像提示词）
@@ -237,3 +248,9 @@ error_message, human_feedback, should_pause
 - [Multi-Agent 系统使用指南](MULTI_AGENT_GUIDE.md)
 - [Pipeline 流程详解](pipeline.md)
 - [API 参考](api-reference.md)
+
+## 后续计划
+
+1. 继续把文档统一到当前目录结构和 v1 API 口径。
+2. 为视频链路与 IP 产物补充更细的运行态说明和接口文档。
+3. 收敛 `NovelState` 中剩余兼容字段的说明，避免文档和代码再次漂移。

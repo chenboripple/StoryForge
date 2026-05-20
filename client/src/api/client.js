@@ -97,6 +97,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
+  suggestNovelCoverPrompt: (novelId, data = {}) =>
+    request(`${API_BASE}/novels/${encodeURIComponent(novelId)}/cover/prompt-draft`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
   getCharacterVisuals: (novelId, characterId) =>
     request(
       `${API_BASE}/novels/${encodeURIComponent(novelId)}/characters/${encodeURIComponent(
@@ -108,6 +114,17 @@ export const api = {
       `${API_BASE}/novels/${encodeURIComponent(novelId)}/characters/${encodeURIComponent(
         characterId
       )}/visuals/generate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }
+    ),
+  suggestCharacterMainPrompt: (novelId, characterId, data = {}) =>
+    request(
+      `${API_BASE}/novels/${encodeURIComponent(novelId)}/characters/${encodeURIComponent(
+        characterId
+      )}/visuals/main/prompt-draft`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

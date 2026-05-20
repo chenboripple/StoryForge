@@ -15,7 +15,7 @@ import json
 import os
 from datetime import datetime
 
-from core.models.ip_assets import (
+from core.models.ip import (
     CharacterIP,
     RelationshipEdge,
     SceneSetting,

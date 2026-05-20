@@ -2,6 +2,17 @@
 
 StoryForge 使用单一 YAML 配置文件，所有运行配置都从该文件读取。
 
+## 当前实现
+
+- 当前配置文件固定为 `~/.storyforge/storyforge.yaml`。
+- `llm`、`models`、`model_routing`、`storage`、`server`、`pipeline`、`console` 都从同一文件加载。
+- 临时创建的 Agent 仍受该配置文件控制。
+
+## 后续计划
+
+1. 为视频 provider、图像 provider、向量 provider 补充更完整的字段说明。
+2. 为 Web Console 暴露更清晰的配置摘要和运行态检查接口。
+
 核心原则：所有 Agent（包含临时创建的 Agent）使用什么模型，都由用户在 `~/.storyforge/storyforge.yaml` 决定。
 
 ---
@@ -152,7 +163,7 @@ video:
 
 **注意**：配置文件放在用户主目录，不会被任何 Git 仓库追踪，可安全填写 API 密钥。
 
-完整配置示例与更多说明见 [docs/config-example.md](config-example.md)。
+完整配置示例与更多说明见 [config-example.md](config-example.md)。
 
 ---
 

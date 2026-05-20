@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from core.models.video_assets import VideoState
+from core.models.video import VideoState
 from core.storage import StorageManager
 from core.video import StubEmbeddingProvider, StubImageProvider, VideoConsistencyService
+from core.video.workflow import (
+    build_visual_bible_for_novel,
+    generate_video_assets_for_novel,
+    generate_video_script_for_novel,
+    validate_video_consistency_for_novel,
+)
 from stages.video_assets.video_asset_generator import VideoAssetGenerator
 from stages.video_bible.visual_bible_builder import VisualBibleBuilder
 from stages.video_script.video_script_generator import VideoScriptGenerator
@@ -20,23 +26,9 @@ def _generate_video_script_assets(project_dir: str, novel_id: str, sm: StorageMa
     if not chapters:
         raise RuntimeError(f"小说无章节内容: {novel_id}")
 
-    chars = sm.load_characters(novel_id)
-
-    script_generator = VideoScriptGenerator()
-    bible_builder = VisualBibleBuilder()
-    asset_generator = VideoAssetGenerator(image_provider=StubImageProvider())
-
-    script = script_generator.generate(
-        novel_id=novel_id,
-        title=meta.novel_title or novel_id,
-        chapters=chapters,
-    )
-    bible = bible_builder.build(novel_id, script, chars)
-    manifest = asset_generator.generate(novel_id, script, bible)
-
-    sm.save_video_script(novel_id, script)
-    sm.save_visual_bible(novel_id, bible)
-    sm.save_video_manifest(novel_id, manifest)
+    script = generate_video_script_for_novel(sm, novel_id, VideoScriptGenerator())
+    bible = build_visual_bible_for_novel(sm, novel_id, VisualBibleBuilder())
+    manifest = generate_video_assets_for_novel(sm, novel_id, VideoAssetGenerator(image_provider=StubImageProvider()))
 
     state = sm.load_video_state(novel_id) or VideoState(novel_id=novel_id)
     state.script = script
@@ -62,19 +54,11 @@ def _check_video_consistency(project_dir: str, novel_id: str, thresholds: dict, 
     if not bible or not manifest:
         raise RuntimeError("缺少视觉圣经或资产索引，请先生成视频剧本与资产")
 
-    service = VideoConsistencyService(embedding_provider=StubEmbeddingProvider())
-    report = service.validate(
-        novel_id=novel_id,
-        bible=bible,
-        manifest=manifest,
+    report = validate_video_consistency_for_novel(
+        sm,
+        novel_id,
+        VideoConsistencyService(embedding_provider=StubEmbeddingProvider()),
         threshold_overrides=thresholds,
     )
-    sm.save_video_consistency_report(novel_id, report)
-
-    state = sm.load_video_state(novel_id) or VideoState(novel_id=novel_id)
-    state.consistency_report = report
-    state.status = "asseted" if report.passed else "failed"
-    state.error_message = "\n".join(report.fallback_reasons) if report.fallback_reasons else ""
-    sm.save_video_state(novel_id, state)
 
     return report.to_dict()

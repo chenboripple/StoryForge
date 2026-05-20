@@ -6,24 +6,12 @@ StoryForge - Agent 基类
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Any, Union
 from abc import ABC, abstractmethod
-from datetime import datetime
 import json
 
+from core.models.agent import AgentMessage
 from core.schema import ReviewResult, ProofreadResult, ChapterContent
 from core.memory import StoryMemory
 from core.utils.errors import ErrorHandler, RetryWithBackoff
-
-
-@dataclass
-class AgentMessage:
-    """Agent 间消息"""
-    sender: str                      # 发送者名称
-    msg_type: str                    # 消息类型：issue / suggestion / info / warning
-    content: str                     # 消息内容
-    target: Optional[str] = None     # 目标 Agent（None 表示广播）
-    chapter: Optional[int] = None    # 相关章节
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    priority: str = "normal"         # low / normal / high / urgent
 
 
 class MessageBus:

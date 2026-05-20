@@ -1,6 +1,6 @@
-# StoryForge - 核心功能实现总结
+# StoryForge 核心实现现状
 
-## 实现的功能
+## 当前实现
 
 ### 1. 知识萃取阶段 (stages/extraction/)
 
@@ -48,7 +48,7 @@
 - 新增 `chapter_analyses` 字段保存知识萃取结果
 - 新增 `story_bible` 字段保存 Story Bible 对象
 
-## 使用方式
+## 当前使用方式
 
 ```python
 from pipeline.novel_pipeline import NovelPipeline
@@ -81,7 +81,7 @@ final_state = pipeline.run(state)
 # resumed_state = pipeline.resume(novel_id="my_novel_001", chapter=1)
 ```
 
-## 文件结构
+## 当前涉及模块
 
 ```
 StoryForge/
@@ -101,9 +101,15 @@ StoryForge/
     └── state.py (更新)
 ```
 
-## 注意事项
+## 当前约束
 
 1. 核心功能都已实现占位符逻辑（即使没有 LLM 也不会崩溃）
 2. `OutlineGenerator` 与 `ProgressivePlanner` 位于 `stages/outline/`，由 Pipeline 直接调用
-3. IP 生成器默认输出到 `./ip_assets` 目录
+3. IP 相关共享逻辑现在统一走 `core/ip_workflow.py`
 4. 检查点仍然保存到 `./checkpoints` 目录
+
+## 后续计划
+
+1. 继续把视频链路、视觉链路和提案链路的摘要能力补到 Web Console。
+2. 为 Pipeline 的反馈回写和 proposal 审批补充更明确的操作文档。
+3. 继续收口文档里的旧路径和兼容表述，保持文档与代码同步。

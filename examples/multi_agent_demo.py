@@ -162,7 +162,7 @@ def run_demo(use_agent_routing=False):
 
     if result.reviews.get(1):
         review = result.reviews[1][-1]
-        print(f"  最新评分: {review.score}分")
+        print(f"  最新评分: {review.total_score}分")
         print(f"  是否通过: {'是' if review.passed else '否'}")
 
     print(f"\n{'=' * 60}")

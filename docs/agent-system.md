@@ -1,5 +1,16 @@
 # Agent 系统设计
 
+## 当前实现
+
+- Agent 系统当前以 `AgentPersona`、`BaseAgent`、`MessageBus` 为基础抽象。
+- 正式通信模型统一由 `core.models.agent` 重新导出。
+- Writer、Reviewer、Reviser、Proofreader 以及视觉相关 Agent 已在实际链路中使用。
+
+## 后续计划
+
+1. 为不同 Agent 的上下文装载策略补充更细的文档。
+2. 继续减少示例代码中对旧字段名和兼容容器的依赖。
+
 ## 核心概念
 
 ### AgentPersona: 角色即提示词工程
@@ -102,7 +113,7 @@ agent.publish_message(
 bus.subscribe(agent_name="writer", callback=handle_message)
 bus.subscribe_by_type(msg_type="warning", callback=handle_warning)
 
-# 查询历史
+# 查询消息记录
 messages = bus.get_messages(agent="writer", chapter=3)
 ```
 
@@ -230,7 +241,7 @@ class ReviewResult:
 - 当前章节完整内容
 - 最新审稿意见
 - 结构化问题列表（仅 S/A 级）
-- 历史修改轮次
+- 已发生的修改轮次
 
 **输出**：完整的修改后章节正文
 

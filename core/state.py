@@ -10,72 +10,11 @@ import copy
 import uuid
 
 from core.config import get_config
-from core.models.chapter import ChapterStatus
-from core.models.novel_meta import PipelineStage
-from core.models.review import ReviewVerdict, ReviewRecord as CoreReviewRecord
-from core.models.proofread import ProofreadRecord as CoreProofreadRecord
-from core.models.characters import Character
-from core.models.agent_comm import AgentMessage, RoutingSuggestion
+from core.models.agent import AgentMessage, RoutingSuggestion
+from core.models.content import ChapterStatus, PipelineStage, ProofreadRecord, ReviewRecord, ReviewVerdict
+from core.models.world import Character
 
-
-# 兼容层：使用 core.models 中的类型作为运行时容器
-@dataclass
-class CharacterInfo:
-    """角色信息（保留用于兼容层，使用 core.models.Character）"""
-    name: str
-    age: Optional[int] = None
-    appearance: str = ""
-    personality: str = ""
-    background: str = ""
-    goals: List[str] = field(default_factory=list)
-    relationships: Dict[str, str] = field(default_factory=dict)
-    classic_lines: List[str] = field(default_factory=list)
-
-    @classmethod
-    def from_character(cls, char: Character) -> "CharacterInfo":
-        return cls(
-            name=char.name,
-            age=char.age,
-            appearance=char.appearance,
-            personality=char.personality,
-            background=char.background,
-            goals=char.goals,
-            relationships={}  # 简化关系
-        )
-
-
-# 兼容层：保留简化版 ReviewRecord
-@dataclass
-class ReviewRecord:
-    """审稿记录（兼容层）"""
-    round: int
-    reviewer: str
-    score: int
-    comments: str
-    passed: bool
-    timestamp: str = ""
-
-    @classmethod
-    def from_core(cls, core: CoreReviewRecord) -> "ReviewRecord":
-        return cls(
-            round=core.round,
-            reviewer=core.reviewer,
-            score=core.total_score,
-            comments=core.summary,
-            passed=core.passed,
-            timestamp=core.timestamp
-        )
-
-
-# 兼容层：保留简化版 ProofreadRecord
-@dataclass
-class ProofreadRecord:
-    """校对记录（兼容层）"""
-    round: int
-    proofreader: str
-    comments: str
-    passed: bool
-    timestamp: str = ""
+CharacterInfo = Character
 
 
 @dataclass
@@ -95,7 +34,7 @@ class NovelState:
     volume_outline: Dict[int, str] = field(default_factory=dict)
     volume_briefs: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     chapter_briefs: Dict[int, Dict[str, Any]] = field(default_factory=dict)
-    characters: List[CharacterInfo] = field(default_factory=list)
+    characters: List[Character] = field(default_factory=list)
 
     # 章节与审稿（单一真源：creation['chapters']）
     chapters: Dict[int, Any] = field(default_factory=dict)
@@ -257,13 +196,33 @@ class NovelState:
 
         if "reviews" in filtered and isinstance(filtered["reviews"], dict):
             filtered["reviews"] = {
-                int(k): [ReviewRecord(**r) if isinstance(r, dict) else r for r in v]
+                int(k): [
+                    ReviewRecord(
+                        round=int(r.get("round", 1) or 1),
+                        reviewer=str(r.get("reviewer", "") or ""),
+                        total_score=int(r.get("total_score", r.get("score", 0)) or 0),
+                        summary=str(r.get("summary", r.get("comments", "")) or ""),
+                        passed=bool(r.get("passed", False)),
+                        timestamp=str(r.get("timestamp", "") or ""),
+                        verdict=ReviewVerdict.PASS if bool(r.get("passed", False)) else ReviewVerdict.REVISE,
+                    ) if isinstance(r, dict) else r
+                    for r in v
+                ]
                 for k, v in filtered["reviews"].items()
             }
 
         if "proofread_records" in filtered and isinstance(filtered["proofread_records"], dict):
             filtered["proofread_records"] = {
-                int(k): [ProofreadRecord(**p) if isinstance(p, dict) else p for p in v]
+                int(k): [
+                    ProofreadRecord(
+                        round=int(p.get("round", 1) or 1),
+                        proofreader=str(p.get("proofreader", "") or ""),
+                        summary=str(p.get("summary", p.get("comments", "")) or ""),
+                        passed=bool(p.get("passed", False)),
+                        timestamp=str(p.get("timestamp", "") or ""),
+                    ) if isinstance(p, dict) else p
+                    for p in v
+                ]
                 for k, v in filtered["proofread_records"].items()
             }
 
@@ -478,8 +437,8 @@ class NovelState:
                     {
                         "round": r.round,
                         "reviewer": r.reviewer,
-                        "score": r.score,
-                        "comments": r.comments,
+                        "total_score": r.total_score,
+                        "summary": r.summary,
                         "passed": r.passed,
                         "timestamp": r.timestamp,
                     }
@@ -492,7 +451,7 @@ class NovelState:
                     {
                         "round": p.round,
                         "proofreader": p.proofreader,
-                        "comments": p.comments,
+                        "summary": p.summary,
                         "passed": p.passed,
                         "timestamp": p.timestamp,
                     }

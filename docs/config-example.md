@@ -1,5 +1,15 @@
 # StoryForge 配置文件示例
 
+## 当前实现
+
+- 这是当前生效的 `storyforge.yaml` 示例模板。
+- 模型路由、存储目录、Web Console、调试输出都通过这一份配置集中定义。
+
+## 后续计划
+
+1. 补充图像、视频与向量 provider 的完整样例。
+2. 为任务并发、成本监控等字段提供更直接的推荐值。
+
 > 本文件是 `storyforge.yaml` 的示例模板。复制下方代码块为 `~/.storyforge/storyforge.yaml`，按需修改后即可生效。
 
 > 约定：所有 Agent 使用什么模型，均由该配置文件控制（包含临时创建的 Agent）。
@@ -150,6 +160,8 @@ storage:
 server:
   host: 127.0.0.1
   port: 5089
+  # Gunicorn worker 数；不填则使用 Gunicorn 默认值，最大 10
+  workers: 2
   cors_origins:
     - "http://localhost:3000"
     - "http://127.0.0.1:3000"

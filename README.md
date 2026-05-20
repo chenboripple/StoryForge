@@ -150,7 +150,7 @@ Web Console 当前可以做这些事：
 
 - 📅 事件时间线
 - 👤 人物状态变化
-- 🌍 世界设定演进
+- 🌍 世界设定变化
 - ⚠️ 一致性问题预警
 
 ### 📚 知识萃取与 IP 生成
@@ -226,6 +226,20 @@ results = pipeline.run_batch(state, chapters=[1, 2, 3, 4, 5])
 - 🎨 [角色视觉生成](docs/CHARACTER_VISUAL_GENERATION.md) - 查看视觉生成约束与 API
 - 📡 [API 参考](docs/api-reference.md) - 完整的 API 文档
 - ⚙️ [配置说明](docs/config.md) - 配置文件结构与字段解释
+
+---
+
+## 当前版本
+
+- 当前仓库以 `core.models.content / world / agent / extraction / ip / video` 作为统一模型入口。
+- Web Console 统一使用 `/api/v1/*` 路由，支持常驻服务、任务队列和本地图片持久化。
+- IP 与 Video 相关共享逻辑已经分别收口到 `core/ip_workflow.py` 和 `core/video/workflow.py`。
+
+## 后续计划
+
+1. 继续增强 Web Console 的任务反馈与提案审批体验。
+2. 补全视频 provider 的真实接入，而不只保留 stub/provider skeleton。
+3. 继续压缩兼容层，让运行态和正式模型保持更一致的结构。
 
 ---
 

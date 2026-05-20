@@ -3,18 +3,30 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import os
 from typing import Any, Dict, Optional
 
 from agents.character_visual_agent import CharacterVisualAgent
-from core.model_router.model_router import ModelRouter, TaskType
 from core.storage import StorageManager
+from web_console.utils import _now
+from web_console.services.visual_common import attach_local_url, build_prompt_optimizer_client
+from web_console.services.visual_prompting import generate_character_main_prompt
 
 VISUALS_FILENAME = "character_visuals.json"
 
 
-def _now() -> str:
-    return datetime.now().isoformat()
+def _hydrate_profile_local_urls(profile: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(profile, dict):
+        return profile
+
+    profile["main_image"] = attach_local_url(profile.get("main_image"))
+
+    for key in ("gallery_images", "video_images"):
+        images = profile.get(key)
+        if isinstance(images, list):
+            profile[key] = [attach_local_url(img) for img in images]
+
+    return profile
 
 
 def _visuals_path(sm: StorageManager, novel_id: str) -> str:
@@ -36,8 +48,6 @@ def _load_all_visuals(sm: StorageManager, novel_id: str) -> Dict[str, Any]:
 def _save_all_visuals(sm: StorageManager, novel_id: str, payload: Dict[str, Any]) -> None:
     path = _visuals_path(sm, novel_id)
     novel_dir = sm.config.novel_dir(novel_id)
-    import os
-
     os.makedirs(novel_dir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -82,20 +92,12 @@ def _ensure_profile(sm: StorageManager, novel_id: str, character_id: str) -> Dic
 
 def get_character_visuals(sm: StorageManager, novel_id: str, character_id: str) -> Dict[str, Any]:
     profile = _ensure_profile(sm, novel_id, character_id)
+    profile = _hydrate_profile_local_urls(profile)
     return {
         "novel_id": novel_id,
         "character_id": character_id,
         "profile": profile,
     }
-
-
-def _build_prompt_optimizer_client():
-    try:
-        router = ModelRouter()
-        routed = router.route(TaskType.REVIEW, agent_name="reviewer")
-        return router.get_client(routed.model_name)
-    except Exception:
-        return None
 
 
 def generate_character_visual(
@@ -143,10 +145,20 @@ def generate_character_visual(
 
     character_name = profile.get("character_name") or _find_character_name(sm, novel_id, character_id)
     
-    # gallery 和 video 时，直接用用户提示词，由 agent 通过参考图片来确保一致性
+    # main 时先基于小说/角色信息自动生成提示词；gallery/video 保持当前行为。
+    prompt_client = build_prompt_optimizer_client()
     final_prompt = prompt
+    if slot == "main":
+        final_prompt = generate_character_main_prompt(
+            sm=sm,
+            novel_id=novel_id,
+            character_id=character_id,
+            user_prompt=prompt,
+            style=style,
+            llm_client=prompt_client,
+        )
 
-    agent = CharacterVisualAgent(llm_client=_build_prompt_optimizer_client())
+    agent = CharacterVisualAgent(llm_client=prompt_client)
     
     # 若为 gallery/video，传入 main_image 的本地路径作为参考
     agent_payload = {
@@ -164,7 +176,7 @@ def generate_character_visual(
         if main_local_path:
             agent_payload["reference_image_path"] = main_local_path
     
-    generated = agent.invoke(agent_payload)
+    generated = attach_local_url(agent.invoke(agent_payload))
 
     if slot == "main":
         profile["main_image"] = generated
@@ -195,7 +207,7 @@ def generate_character_visual(
                 }
                 if main_local_path:
                     angle_payload["reference_image_path"] = main_local_path
-                angle_generated = agent.invoke(angle_payload)
+                angle_generated = attach_local_url(agent.invoke(angle_payload))
                 video_images.append(angle_generated)
         elif index is not None and 0 <= index < len(video_images):
             # 替换指定位置
@@ -225,6 +237,8 @@ def generate_character_visual(
 
     all_profiles[character_id] = profile
     _save_all_visuals(sm, novel_id, all_profiles)
+
+    profile = _hydrate_profile_local_urls(profile)
 
     return {
         "novel_id": novel_id,

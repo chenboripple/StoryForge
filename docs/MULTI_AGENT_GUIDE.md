@@ -1,5 +1,15 @@
 # StoryForge Multi-Agent 系统使用指南
 
+## 当前实现
+
+- MessageBus 已默认可用，Agent 间消息会写入 `NovelState.agent_messages`。
+- 路由建议会写入 `NovelState.routing_suggestions`，当前主要用于观测、调试和后续决策分析。
+
+## 后续计划
+
+1. 为 `routing_suggestions` 增加更明确的采用策略和可视化界面。
+2. 将多 Agent 消息与章节审稿、校对、视觉任务串联得更完整。
+
 ## 概述
 
 StoryForge 现在支持真正的 multi-agent 功能：
@@ -68,7 +78,7 @@ Agent 自主路由的工作流程：
 
 1. **Agent 发布建议** - Reviewer/Proofreader 完成任务后发布路由建议
 2. **建议存入 state** - 路由建议保存在 `state.routing_suggestions` 中
-3. **Pipeline 记录** - 当前实现会把建议写入 `state.routing_suggestions`，供调试与后续演进使用
+3. **Pipeline 记录** - 当前实现会把建议写入 `state.routing_suggestions`，供调试与后续决策分析使用
 
 ```python
 # Agent 代码示例
@@ -131,20 +141,13 @@ messages = self.get_messages_from_state(
 # messages: List[Dict]
 ```
 
-## 渐进式采用策略
+## 当前使用建议
 
-为了保持系统稳定性，建议按以下步骤启用多 Agent 功能：
+为了保持系统稳定性，当前建议这样使用多 Agent 功能：
 
-1. **阶段 1** - 启用 MessageBus（已默认）
-   - 查看 Agent 间消息日志，了解 Agent 协作情况
-
-2. **阶段 2** - 启用路由建议记录
-   - 不使用路由建议决策，但生成并保存它们
-   - 对比路由建议与实际 Pipeline 决策
-
-3. **阶段 3** - 接入真实路由决策
-    - 在 `pipeline/novel_pipeline.py` 中消费 `routing_suggestions`
-    - 再为不同置信度定义采用策略
+1. 开启 MessageBus，观察 Agent 间消息是否能覆盖审稿、返修和视觉协作场景。
+2. 保留路由建议记录，但仍以 Pipeline 内建路由作为正式执行依据。
+3. 在验证建议质量稳定后，再考虑把部分建议接入真实决策链。
 
 ## 示例
 

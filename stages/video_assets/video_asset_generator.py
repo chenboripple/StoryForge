@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import List
 
-from core.models.video_assets import AssetManifest, VideoAsset, VideoScript, VisualBible
+from core.models.video import AssetManifest, VideoAsset, VideoScript, VisualBible
 from core.video.providers import ImageGenRequest, ImageProvider
 
 

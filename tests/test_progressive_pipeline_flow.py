@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.models.content import ReviewVerdict  # noqa: E402
 from core.state import NovelState, ReviewRecord  # noqa: E402
 from pipeline.novel_pipeline import NovelPipeline  # noqa: E402
 
@@ -83,9 +84,10 @@ def test_progressive_flow_chapter_plan_write_feedback():
         ReviewRecord(
             round=1,
             reviewer="青锋",
-            score=72,
-            comments="存在设定冲突",
+                total_score=72,
+                summary="存在设定冲突",
             passed=False,
+                verdict=ReviewVerdict.REVISE,
             timestamp="",
         )
     ]

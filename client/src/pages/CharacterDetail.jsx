@@ -17,6 +17,7 @@ import {
   Typography,
   message,
 } from "antd";
+import { api } from "../api/client";
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
@@ -24,8 +25,6 @@ import {
   ReloadOutlined,
   SyncOutlined,
 } from "@ant-design/icons";
-
-import { api } from "../api/client";
 import VisualGenerationForm from "../components/VisualGenerationForm";
 
 const { Title, Text } = Typography;
@@ -53,7 +52,7 @@ async function waitForTask(taskId) {
 }
 
 // 主形象编辑面板
-function MainImageSection({ profile, loading, onGenerate }) {
+function MainImageSection({ profile, loading, onGenerate, onSuggestPrompt, draftLoading, draftFeedback }) {
   const [showForm, setShowForm] = useState(false);
   const [prompt, setPrompt] = useState(profile?.main_image?.prompt || DEFAULT_PROMPT);
   const [style, setStyle] = useState(profile?.main_image?.style || "");
@@ -72,6 +71,41 @@ function MainImageSection({ profile, loading, onGenerate }) {
     }
   };
 
+  const handleSuggest = async () => {
+    if (!onSuggestPrompt) return;
+    const suggested = await onSuggestPrompt({ prompt, style });
+    if (suggested) {
+      setPrompt(suggested);
+    }
+  };
+
+  const renderFeedback = () => {
+    if (!draftFeedback) return null;
+    const items = [];
+    if ((draftFeedback.narrative_conflicts || []).length) {
+      items.push(`叙事冲突: ${(draftFeedback.narrative_conflicts || []).slice(0, 2).join(" | ")}`);
+    }
+    if ((draftFeedback.consistency_constraints || []).length) {
+      items.push(`一致性约束: ${(draftFeedback.consistency_constraints || []).slice(0, 2).join(" | ")}`);
+    }
+    if ((draftFeedback.taboo_elements || []).length) {
+      items.push(`禁忌元素: ${(draftFeedback.taboo_elements || []).slice(0, 2).join(" | ")}`);
+    }
+    if ((draftFeedback.style_notes || []).length) {
+      items.push(`风格备注: ${(draftFeedback.style_notes || []).slice(0, 2).join(" | ")}`);
+    }
+    if (!items.length) return null;
+
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="AI 草稿已融合 writer/校对反馈"
+        description={<div>{items.map((x, i) => <div key={i}>{x}</div>)}</div>}
+      />
+    );
+  };
+
   return (
     <Card title="主形象">
       {profile?.main_image ? (
@@ -88,7 +122,7 @@ function MainImageSection({ profile, loading, onGenerate }) {
                 }}
               >
                 <Image
-                  src={profile.main_image.url}
+                  src={profile.main_image.local_url || profile.main_image.url}
                   alt="main"
                   style={{
                     objectFit: "contain",
@@ -142,10 +176,16 @@ function MainImageSection({ profile, loading, onGenerate }) {
                 setAspectRatio={setAspectRatio}
                 loading={loading}
                 showActions
+                extraActions={(
+                  <Button onClick={handleSuggest} loading={draftLoading}>
+                    AI生成提示词草稿
+                  </Button>
+                )}
                 submitText="确认重生成"
                 onSubmit={handleGenerate}
                 onCancel={() => setShowForm(false)}
               />
+              {renderFeedback()}
             </Space>
           )}
         </Space>
@@ -161,21 +201,29 @@ function MainImageSection({ profile, loading, onGenerate }) {
           </Button>
 
           {showForm && (
-            <VisualGenerationForm
-              prompt={prompt}
-              setPrompt={setPrompt}
-              style={style}
-              setStyle={setStyle}
-              imagePreset={imagePreset}
-              setImagePreset={setImagePreset}
-              aspectRatio={aspectRatio}
-              setAspectRatio={setAspectRatio}
-              loading={loading}
-              showActions
-              submitText="生成主形象"
-              onSubmit={handleGenerate}
-              onCancel={() => setShowForm(false)}
-            />
+            <>
+              <VisualGenerationForm
+                prompt={prompt}
+                setPrompt={setPrompt}
+                style={style}
+                setStyle={setStyle}
+                imagePreset={imagePreset}
+                setImagePreset={setImagePreset}
+                aspectRatio={aspectRatio}
+                setAspectRatio={setAspectRatio}
+                loading={loading}
+                showActions
+                extraActions={(
+                  <Button onClick={handleSuggest} loading={draftLoading}>
+                    AI生成提示词草稿
+                  </Button>
+                )}
+                submitText="生成主形象"
+                onSubmit={handleGenerate}
+                onCancel={() => setShowForm(false)}
+              />
+              {renderFeedback()}
+            </>
           )}
         </Space>
       )}
@@ -242,7 +290,7 @@ function GalleryImagesSection({ profile, loading, onGenerate }) {
                   }}
                 >
                   <Image
-                    src={img.url}
+                    src={img.local_url || img.url}
                     alt={img.prompt || "gallery-image"}
                     style={{
                       objectFit: "contain",
@@ -460,7 +508,7 @@ function VideoImagesSection({ profile, loading, onGenerate }) {
                     }}
                   >
                     <Image
-                      src={img.url}
+                      src={img.local_url || img.url}
                       alt={`video-${idx}`}
                       style={{
                         objectFit: "contain",
@@ -520,6 +568,8 @@ export default function CharacterDetail() {
   const [novel, setNovel] = useState(null);
   const [character, setCharacter] = useState(location.state?.character || null);
   const [profile, setProfile] = useState(null);
+  const [mainDrafting, setMainDrafting] = useState(false);
+  const [mainDraftFeedback, setMainDraftFeedback] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -587,6 +637,27 @@ export default function CharacterDetail() {
     }
   };
 
+  const doSuggestMainPrompt = async (params = {}) => {
+    setMainDrafting(true);
+    try {
+      const res = await api.suggestCharacterMainPrompt(novelId, characterId, {
+        prompt: params.prompt || "",
+        style: params.style || "",
+      });
+      const suggested = String(res?.suggested_prompt || "").trim();
+      if (!suggested) {
+        throw new Error("后端未返回提示词草稿");
+      }
+      setMainDraftFeedback(res?.structured_feedback || null);
+      message.success("已生成主图提示词草稿，请确认后提交生成");
+      return suggested;
+    } catch (err) {
+      message.error(`生成主图提示词草稿失败: ${err.message}`);
+      return null;
+    } finally {
+      setMainDrafting(false);
+    }
+  };
   const toggleFinalize = async () => {
     setSaving(true);
     try {
@@ -661,6 +732,9 @@ export default function CharacterDetail() {
         profile={profile}
         loading={saving}
         onGenerate={doGenerate}
+        draftLoading={mainDrafting}
+        draftFeedback={mainDraftFeedback}
+        onSuggestPrompt={doSuggestMainPrompt}
       />
 
       <GalleryImagesSection

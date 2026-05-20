@@ -73,15 +73,8 @@ class NovelMeta(BaseModel):
         }
 
     def to_index_entry(self) -> Dict[str, any]:
-        """生成轻量索引条目"""
+        """生成最小索引条目（仅小说清单与路径）。"""
         return {
             "novel_id": self.novel_id,
-            "novel_title": self.novel_title,
-            "genre": self.genre,
-            "concept": self.concept[:120] if self.concept else "",
-            "current_stage": self.current_stage.value,
-            "current_chapter": self.current_chapter,
-            "total_chapters": self.total_chapters,
-            "approved_chapters": self.approved_chapters,
-            "progress_percent": round(self.approved_chapters / max(self.total_chapters, 1) * 100, 1),
+            "novel_path": f"novels/{self.novel_id}",
         }

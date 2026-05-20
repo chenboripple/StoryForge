@@ -3,7 +3,7 @@ StoryForge - 结构化输出 Schema
 定义所有 LLM 输出的数据结构，确保类型安全
 
 NOTE: This file now only contains LLM-output wrapper types.
-Storage model types are in core.models.* (e.g., core.models.review, core.models.proofread)
+Storage model types are in core.models.content / core.models.world / core.models.video / core.models.ip.
 """
 
 from dataclasses import dataclass, field
@@ -11,8 +11,7 @@ from typing import List, Dict, Optional, Any
 from enum import Enum
 import json
 
-from core.models.review import ReviewVerdict, DimensionScore, ReviewIssue
-from core.models.proofread import ProofreadIssue
+from core.models.content import ReviewVerdict, DimensionScore, ReviewIssue, ProofreadIssue
 
 
 @dataclass

@@ -166,6 +166,9 @@ export default function NovelDetail() {
   const [cover, setCover] = useState(null);
   const [coverModalOpen, setCoverModalOpen] = useState(false);
   const [coverSaving, setCoverSaving] = useState(false);
+  const [coverDrafting, setCoverDrafting] = useState(false);
+  const [coverDraftFeedback, setCoverDraftFeedback] = useState(null);
+  const [coverDraftCollaboration, setCoverDraftCollaboration] = useState(null);
   const [coverPrompt, setCoverPrompt] = useState(DEFAULT_PROMPT);
   const [coverStyle, setCoverStyle] = useState("");
   const [coverImagePreset, setCoverImagePreset] = useState(DEFAULT_IMAGE_PRESET);
@@ -254,6 +257,28 @@ export default function NovelDetail() {
       message.error(`封面生成失败: ${err.message}`);
     } finally {
       setCoverSaving(false);
+    }
+  };
+
+  const doSuggestCoverPrompt = async () => {
+    setCoverDrafting(true);
+    try {
+      const res = await api.suggestNovelCoverPrompt(novelId, {
+        prompt: (coverPrompt || "").trim(),
+        style: coverStyle || "",
+      });
+      const suggested = String(res?.suggested_prompt || "").trim();
+      if (!suggested) {
+        throw new Error("后端未返回提示词草稿");
+      }
+      setCoverPrompt(suggested);
+      setCoverDraftFeedback(res?.structured_feedback || null);
+      setCoverDraftCollaboration(res?.collaboration || null);
+      message.success("已生成封面提示词草稿，请确认后提交生成");
+    } catch (err) {
+      message.error(`生成封面提示词草稿失败: ${err.message}`);
+    } finally {
+      setCoverDrafting(false);
     }
   };
 
@@ -348,7 +373,7 @@ export default function NovelDetail() {
         try {
           const res = await api.getCharacterVisuals(novelId, cid);
           const main = res?.profile?.main_image;
-          return [cid, main?.thumb_url || main?.url || ""];
+          return [cid, main?.local_url || main?.thumb_url || main?.url || ""];
         } catch (e) {
           return [cid, ""];
         }
@@ -415,7 +440,7 @@ export default function NovelDetail() {
                     }}
                   >
                     <Image
-                      src={cover.cover_image.url}
+                      src={cover.cover_image.local_url || cover.cover_image.url}
                       alt="novel-cover"
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                       preview={{ mask: "预览" }}
@@ -498,25 +523,134 @@ export default function NovelDetail() {
               />
 
               <Collapse ghost>
-                <Panel header="大纲与世界观" key="outline-world">
+                <Panel header="novel.json（全书总纲）" key="novel-doc">
                   <Space direction="vertical" style={{ width: "100%" }}>
-                    <Text strong>故事大纲</Text>
+                    <Space wrap>
+                      <Tag color="blue">类型：{novelContext?.novel_doc?.genre || novel.genre || "未分类"}</Tag>
+                      <Tag>目标字数：{novelContext?.novel_doc?.target_word_count || novel.target_word_count || 0}</Tag>
+                      <Tag>卷数：{novelContext?.novel_doc?.volume_count || 0}</Tag>
+                      <Tag>阶段：{labels.stage(novelContext?.novel_doc?.current_stage || novel.current_stage)}</Tag>
+                    </Space>
+                    {novelContext?.novel_doc?.logline ? (
+                      <>
+                        <Text strong>一句话梗概</Text>
+                        <Paragraph style={{ whiteSpace: "pre-wrap" }}>
+                          {novelContext.novel_doc.logline}
+                        </Paragraph>
+                      </>
+                    ) : null}
+                    <Text strong>核心概念</Text>
                     <Paragraph style={{ whiteSpace: "pre-wrap" }}>
-                      {novelContext?.outline?.overall_outline || "暂无大纲"}
+                      {novelContext?.novel_doc?.concept || novel.concept || "暂无核心概念"}
                     </Paragraph>
-                    <Text strong>世界观</Text>
+                    <Text strong>全书总纲</Text>
                     <Paragraph style={{ whiteSpace: "pre-wrap" }}>
-                      {novelContext?.world?.overview || "暂无世界观信息"}
+                      {novelContext?.novel_doc?.overall_outline || novelContext?.outline?.overall_outline || "暂无总纲"}
                     </Paragraph>
-                    {Array.isArray(novelContext?.world?.rules) && novelContext.world.rules.length > 0 ? (
+                    {(novelContext?.novel_doc?.themes || []).length > 0 ? (
                       <Space wrap>
-                        {novelContext.world.rules.map((rule, idx) => (
-                          <Tag key={`rule-${idx}`}>{rule}</Tag>
+                        {(novelContext?.novel_doc?.themes || []).map((t, idx) => (
+                          <Tag key={`theme-${idx}`}>{t}</Tag>
                         ))}
                       </Space>
                     ) : null}
                   </Space>
                 </Panel>
+
+                <Panel header="world.json（世界观）" key="world-doc">
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    <Text strong>世界观</Text>
+                    <Paragraph style={{ whiteSpace: "pre-wrap" }}>
+                      {novelContext?.world_doc?.overview || novelContext?.world?.overview || "暂无世界观信息"}
+                    </Paragraph>
+                    {Array.isArray(novelContext?.world_doc?.rules) && novelContext.world_doc.rules.length > 0 ? (
+                      <Space wrap>
+                        {novelContext.world_doc.rules.map((rule, idx) => (
+                          <Tag key={`rule-${idx}`}>{rule}</Tag>
+                        ))}
+                      </Space>
+                    ) : null}
+                    <Space wrap>
+                      <Tag>地点数：{novelContext?.world_doc?.location_count || 0}</Tag>
+                      <Tag>势力数：{novelContext?.world_doc?.faction_count || 0}</Tag>
+                      {novelContext?.world_doc?.technology_level ? (
+                        <Tag>科技：{novelContext.world_doc.technology_level}</Tag>
+                      ) : null}
+                      {novelContext?.world_doc?.magic_system ? (
+                        <Tag>体系：{novelContext.world_doc.magic_system}</Tag>
+                      ) : null}
+                    </Space>
+                  </Space>
+                </Panel>
+
+                <Panel header="foreshadowing.json（伏笔体系）" key="foreshadowing-doc">
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    <Space wrap>
+                      <Tag color="blue">总数：{novelContext?.foreshadowing_doc?.total || 0}</Tag>
+                      <Tag color="green">已回收：{novelContext?.foreshadowing_doc?.resolved || 0}</Tag>
+                      <Tag color="orange">未回收：{novelContext?.foreshadowing_doc?.open || 0}</Tag>
+                    </Space>
+                    {(novelContext?.foreshadowing_doc?.items || []).length > 0 ? (
+                      <List
+                        size="small"
+                        dataSource={novelContext.foreshadowing_doc.items}
+                        renderItem={(item) => (
+                          <List.Item>
+                            <Space direction="vertical" size={2} style={{ width: "100%" }}>
+                              <Space>
+                                <Text strong>{item.foreshadowing_id}</Text>
+                                <Tag color={item.status === "resolved" ? "green" : "orange"}>
+                                  {item.status === "resolved" ? "已回收" : "未回收"}
+                                </Tag>
+                              </Space>
+                              <Text>{item.content}</Text>
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                埋设章节：{(item.set_in_chapters || []).join(",") || "-"}；
+                                回收章节：{(item.resolved_in_chapters || []).join(",") || "-"}
+                              </Text>
+                            </Space>
+                          </List.Item>
+                        )}
+                      />
+                    ) : (
+                      <Empty description="暂无伏笔数据" />
+                    )}
+                  </Space>
+                </Panel>
+
+                <Panel header="volX.json（卷纲）" key="volumes-doc">
+                  {(novelContext?.volumes_doc?.volumes || []).length > 0 ? (
+                    <Collapse accordion>
+                      {novelContext.volumes_doc.volumes.map((vol) => (
+                        <Panel
+                          key={`vol-plan-${vol.volume_num}`}
+                          header={`第 ${vol.volume_num} 卷 · ${vol.title || "未命名卷"}`}
+                        >
+                          <Space direction="vertical" style={{ width: "100%" }}>
+                            {vol.theme ? <Text>主题：{vol.theme}</Text> : null}
+                            {vol.chapter_range ? <Text>章节范围：{vol.chapter_range}</Text> : null}
+                            {vol.summary ? (
+                              <Paragraph style={{ whiteSpace: "pre-wrap" }}>{vol.summary}</Paragraph>
+                            ) : null}
+                            {(vol.key_events || []).length > 0 ? (
+                              <>
+                                <Text strong>关键事件</Text>
+                                <List
+                                  size="small"
+                                  dataSource={vol.key_events}
+                                  renderItem={(evt, idx) => <List.Item key={`vol-${vol.volume_num}-evt-${idx}`}>{evt}</List.Item>}
+                                />
+                              </>
+                            ) : null}
+                          </Space>
+                        </Panel>
+                      ))}
+                    </Collapse>
+                  ) : (
+                    <Empty description="暂无卷纲数据" />
+                  )}
+                </Panel>
+
                 <Panel header="时间线" key="timeline">
                   {Array.isArray(novelContext?.timeline) && novelContext.timeline.length > 0 ? (
                     <List
@@ -563,7 +697,32 @@ export default function NovelDetail() {
           promptPlaceholder={`${novel?.novel_title || "小说"} ${DEFAULT_PROMPT}`}
           stylePlaceholder="例如：暗黑奇幻 / 水彩插画 / 赛博朋克"
           loading={coverSaving}
+          extraTop={coverDraftFeedback ? (
+            <Alert
+              type="info"
+              showIcon
+              message="AI 草稿已融合 writer/校对反馈"
+              description={
+                <div>
+                  {(coverDraftFeedback.narrative_conflicts || []).slice(0, 1).map((x, i) => <div key={`n-${i}`}>叙事冲突: {x}</div>)}
+                  {(coverDraftFeedback.consistency_constraints || []).slice(0, 1).map((x, i) => <div key={`c-${i}`}>一致性约束: {x}</div>)}
+                  {(coverDraftFeedback.taboo_elements || []).slice(0, 1).map((x, i) => <div key={`t-${i}`}>禁忌元素: {x}</div>)}
+                  {(coverDraftFeedback.style_notes || []).slice(0, 1).map((x, i) => <div key={`s-${i}`}>风格备注: {x}</div>)}
+                  {coverDraftCollaboration?.writer ? <div>作者意见: {coverDraftCollaboration.writer}</div> : null}
+                  {coverDraftCollaboration?.editor ? <div>编辑意见: {coverDraftCollaboration.editor}</div> : null}
+                  {coverDraftCollaboration?.art_director ? <div>原画结论: {coverDraftCollaboration.art_director}</div> : null}
+                  {coverDraftCollaboration?.weights ? <div>协商权重: {coverDraftCollaboration.weights}</div> : null}
+                </div>
+              }
+              style={{ marginBottom: 12 }}
+            />
+          ) : null}
           showActions
+          extraActions={(
+            <Button onClick={doSuggestCoverPrompt} loading={coverDrafting}>
+              AI生成提示词草稿
+            </Button>
+          )}
           submitText={cover?.cover_image ? "确认重生成" : "生成封面"}
           onSubmit={doGenerateCover}
           onCancel={() => setCoverModalOpen(false)}

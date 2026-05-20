@@ -228,7 +228,7 @@ def main(save_to_storage: bool = False):
     if 1 in result.reviews:
         print(f"\n审稿记录：")
         for r in result.reviews[1]:
-            print(f"  第{r.round}轮 - {r.reviewer}: {r.score}分 {'✅' if r.passed else '❌'}")
+            print(f"  第{r.round}轮 - {r.reviewer}: {r.total_score}分 {'✅' if r.passed else '❌'}")
 
     # 6. 可选：保存到 StorageManager 供 Web 界面展示
     if save_to_storage:
@@ -276,8 +276,8 @@ def main(save_to_storage: bool = False):
                     chapter_num=ch_num,
                     round=r.round,
                     reviewer=r.reviewer,
-                    total_score=r.score,
-                    summary=r.comments,
+                    total_score=r.total_score,
+                    summary=r.summary,
                     passed=r.passed,
                     timestamp=r.timestamp,
                 )

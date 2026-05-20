@@ -1,5 +1,15 @@
 # Pipeline 流程详解
 
+## 当前实现
+
+- 当前主链路已经覆盖规划、写作、审稿、返修、校对、反馈回写、知识萃取和 IP 生成。
+- 视频节点可按配置启用，并共享 `core/video/workflow.py` 的落盘逻辑。
+
+## 后续计划
+
+1. 为 Web Console 补充更多 Pipeline 节点状态与调试信息展示。
+2. 继续完善 proposal 审批与 context decision 的落地说明。
+
 ## 图结构
 
 StoryForge 使用 LangGraph 构建 Pipeline，以 `NovelState` 为共享状态，节点之间通过条件边和循环边实现复杂的审稿-修改闭环。

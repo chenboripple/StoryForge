@@ -111,6 +111,7 @@ class StorageConfig:
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 5089
+    workers: Optional[int] = None
     cors_origins: Optional[List[str]] = field(
         default_factory=lambda: [
             "http://localhost:3000",

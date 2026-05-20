@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import List
 
-from core.storage import StorageManager
+from core.ip_workflow import build_character_ip_payload, generate_story_bible_for_novel, select_story_bible_characters
+from core.model_router.model_router import ModelRouter, TaskType
+from stages.ip_generation.ip_generator import IPGenerator
 
 from web_console.dependencies import _new_storage_manager
 from web_console.runtime.registry import TaskRegistry
-from web_console.services.novels import _extract_chapter_text, _split_sentences
 from web_console.services.vector import (
     _hash_vector,
     _ip_asset_dir,
@@ -20,59 +20,13 @@ from web_console.services.vector import (
 from web_console.utils import _now, _safe_name
 
 
-def _load_snapshot(project_dir: str, novel_id: str, sm: StorageManager) -> dict:
-    _ = project_dir
-    meta = sm.load_novel_meta(novel_id)
-    if not meta:
-        raise RuntimeError(f"未找到小说: {novel_id}")
-
-    chapters = sm.load_chapters(novel_id)
-    chapter_payload = {
-        str(ch_num): chapter.content
-        for ch_num, chapter in chapters.items()
-    }
-
-    return {
-        "novel_id": novel_id,
-        "novel_title": meta.novel_title or novel_id,
-        "chapters": chapter_payload,
-    }
-
-
-def _generate_character_ip(snapshot: dict, novel_id: str, novel_title: str, character_name: str) -> dict:
-    chapters = snapshot.get("chapters") if isinstance(snapshot.get("chapters"), dict) else {}
-    evidence: List[dict] = []
-
-    for chapter_no, chapter_obj in chapters.items():
-        chapter_text = _extract_chapter_text(chapter_obj)
-        for sentence in _split_sentences(chapter_text):
-            if character_name in sentence:
-                evidence.append(
-                    {
-                        "chapter": str(chapter_no),
-                        "quote": sentence[:200],
-                    }
-                )
-            if len(evidence) >= 12:
-                break
-        if len(evidence) >= 12:
-            break
-
-    summary = (
-        f"角色 {character_name} 在《{novel_title}》中共命中 {len(evidence)} 条证据片段。"
-        "可在后续版本接入 LLM 生成更完整的人设卡。"
-    )
-
-    return {
-        "novel_id": novel_id,
-        "novel_title": novel_title,
-        "character_id": character_name,
-        "character_name": character_name,
-        "generated_at": _now(),
-        "summary": summary,
-        "evidence": evidence,
-        "version": datetime.now().strftime("%Y%m%d%H%M%S"),
-    }
+def _build_ip_generator_client():
+    try:
+        router = ModelRouter()
+        routed = router.route(TaskType.REVIEW, agent_name="reviewer")
+        return router.get_client(routed.model_name)
+    except Exception:
+        return None
 
 
 def _run_ip_task(task_id: str, registry: TaskRegistry) -> None:
@@ -83,8 +37,13 @@ def _run_ip_task(task_id: str, registry: TaskRegistry) -> None:
 
     try:
         sm = _new_storage_manager()
-        snapshot = _load_snapshot(task.project_dir, task.novel_id, sm)
-        novel_title = str(snapshot.get("novel_title") or task.novel_id)
+        meta = sm.load_novel_meta(task.novel_id)
+        if not meta:
+            raise RuntimeError(f"未找到小说: {task.novel_id}")
+        novel_title = str(meta.novel_title or task.novel_id)
+        generator = IPGenerator(llm_client=_build_ip_generator_client())
+        bible = generate_story_bible_for_novel(sm, task.novel_id, generator)
+        selected_chars = select_story_bible_characters(bible, task.character_ids)
 
         output_dir = _ip_asset_dir(task.project_dir, task.novel_id)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -92,13 +51,19 @@ def _run_ip_task(task_id: str, registry: TaskRegistry) -> None:
         generated_files: List[str] = []
         vector_docs: List[dict] = []
 
-        for character_name in task.character_ids:
+        for char_ip in selected_chars:
+            character_name = str(char_ip.name or char_ip.character_id)
             asset_file = output_dir / f"{_safe_name(character_name)}.json"
             if asset_file.exists() and not task.force_regenerate:
                 generated_files.append(str(asset_file))
                 continue
 
-            payload = _generate_character_ip(snapshot, task.novel_id, novel_title, character_name)
+            payload = build_character_ip_payload(
+                novel_id=task.novel_id,
+                novel_title=novel_title,
+                char_ip=char_ip,
+                generated_at=_now(),
+            )
             asset_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             generated_files.append(str(asset_file))
 
@@ -142,10 +107,11 @@ def _run_ip_task(task_id: str, registry: TaskRegistry) -> None:
         with registry.task_lock:
             task.result = {
                 "novel_id": task.novel_id,
-                "character_count": len(task.character_ids),
+                "character_count": len(selected_chars),
                 "generated_files": generated_files,
                 "vector_docs_upserted": upserted,
                 "vector_store": str(_vector_store_file(task.project_dir)),
+                "story_bible_saved": True,
             }
             task.return_code = 0
             task.status = "success"

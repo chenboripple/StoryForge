@@ -480,7 +480,7 @@ class ReviewerAgent(BaseAgent):
     
     def _parse_review_result(self, result_dict):
         """解析 JSON 结果为 ReviewResult 对象"""
-        from core.models.review import DimensionScore, ReviewIssue, ReviewVerdict
+        from core.models.content import DimensionScore, ReviewIssue, ReviewVerdict
 
         dimensions = [
             DimensionScore(**d) for d in result_dict.get("dimensions", [])
@@ -516,8 +516,8 @@ class ReviewerAgent(BaseAgent):
         record = ReviewRecord(
             round=state.review_round + 1,
             reviewer=self.persona.name,
-            score=review.total_score,
-            comments=review.summary,
+            total_score=review.total_score,
+            summary=review.summary,
             passed=review.verdict.value == "pass",
             timestamp=datetime.now().isoformat()
         )
@@ -637,7 +637,7 @@ class ReviserAgent(BaseAgent):
         """构建修改上下文"""
         parts = [
             f"【当前章节内容】\n{chapter_text}\n",
-            f"\n【编辑审稿意见】\n{latest.comments}\n",
+            f"\n【编辑审稿意见】\n{latest.summary}\n",
             f"\n【历史修改轮次】{state.review_round}轮"
         ]
         
@@ -803,7 +803,7 @@ class ProofreaderAgent(BaseAgent):
         )
     
     def _parse_proofread_result(self, result_dict):
-        from core.models.proofread import ProofreadIssue
+        from core.models.content import ProofreadIssue
 
         issues = []
         for i in result_dict.get("issues", []):
@@ -826,6 +826,7 @@ class ProofreaderAgent(BaseAgent):
     def _update_state_with_proofread(self, state, proofread):
         from core.state import ReviewRecord
         from core.models import ChapterStatus
+        from core.models.content import ReviewVerdict
 
         state.proofread_results.setdefault(state.current_chapter, []).append(proofread)
 
@@ -836,9 +837,10 @@ class ProofreaderAgent(BaseAgent):
             record = ReviewRecord(
                 round=state.review_round + 1,
                 reviewer=self.persona.name,
-                score=80 if proofread.passed else 50,
-                comments=proofread.summary,
+                total_score=80 if proofread.passed else 50,
+                summary=proofread.summary,
                 passed=proofread.passed,
+                verdict=ReviewVerdict.PASS if proofread.passed else ReviewVerdict.REVISE,
                 timestamp=datetime.now().isoformat()
             )
             state.reviews.setdefault(state.current_chapter, []).append(record)

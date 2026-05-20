@@ -49,6 +49,7 @@ export default function VisualGenerationForm({
   cancelText = "取消",
   onSubmit,
   onCancel,
+  extraActions = null,
 }) {
   return (
     <Form layout="vertical" size="small">
@@ -98,6 +99,7 @@ export default function VisualGenerationForm({
 
       {showActions && (
         <Space wrap>
+          {extraActions}
           <Button type="primary" loading={loading} onClick={onSubmit}>
             {submitText}
           </Button>

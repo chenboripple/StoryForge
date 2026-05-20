@@ -1,5 +1,15 @@
 # 渐进式披露技术设计（可实施版）
 
+## 当前实现
+
+- 状态模型、Planner、ContextOrchestrator、feedback/proposal 相关接口已经具备基本承载位。
+- 当前文档描述的是现有骨架上的可实施补全方向，而不是独立的旧方案。
+
+## 后续计划
+
+1. 把 ContextOrchestrator 的预算裁剪和升级加载在更多 Agent 中落地。
+2. 为 proposal 生命周期补充存储与 API 说明。
+
 ## 1. 范围
 
 本文是 [progressive_disclosure_architecture.md](progressive_disclosure_architecture.md) 的工程化落地版本，覆盖：

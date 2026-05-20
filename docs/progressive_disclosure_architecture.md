@@ -1,5 +1,16 @@
 # 分层规划与渐进式披露架构设计
 
+## 当前实现
+
+- `NovelState` 已包含 `volume_briefs`、`chapter_briefs`、`context_decisions`、`proposals` 等字段。
+- Pipeline 已包含 `volume_planner`、`chapter_planner`、`feedback_synthesizer` 等节点。
+- 当前系统已经具备按需扩展上下文和回写提案的基础骨架。
+
+## 后续计划
+
+1. 把更多上下文升级触发器和预算策略落到实际节点实现中。
+2. 为 proposal 审批与回滚补充更明确的持久化与 UI 支持。
+
 ## 1. 背景与目标
 
 当前 Pipeline 已具备审稿-修改闭环与消息总线，但在长篇场景下仍存在两个典型问题：
@@ -260,4 +271,4 @@ graph TD
 2. 通过渐进式披露控制 token 与时延成本。
 3. 通过提案制反哺保证高层设定稳定与可回滚。
 
-这与 StoryForge 当前的 Pipeline、状态模型和消息机制兼容，可在不推翻现有结构的前提下渐进演进。
+这与 StoryForge 当前的 Pipeline、状态模型和消息机制兼容，可在不推翻现有结构的前提下持续扩展。
